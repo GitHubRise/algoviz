@@ -47,6 +47,18 @@
 | 推送输出走 stderr | PowerShell 把 `git push` 的进度当错误，`$LASTEXITCODE` 为 1 | 用 `git status -sb`（出现 `## master...origin/master`）与 GitHub API 复核，不看退出码 |
 | 首次 `ls-remote` 报 SSL_ERROR_SYSCALL | 网络抖动 | 改用 `api.github.com` 复核分支与 tag，未重试推送 |
 
+## 追加：纯文档改动不再触发部署
+
+`.github/workflows/pages.yml` 加了 `paths-ignore: ['**.md', 'docs/**', 'memory/**']`。
+验证（2026-11-15）：
+
+| 提交 | 改动内容 | 是否产生 run |
+|---|---|---|
+| `797ea90` | 只改 `.github/workflows/pages.yml` | 是，`completed/success` |
+| 紧随其后的文档提交 | 只改 `docs/`、`memory/` | **否**（runs 列表最新仍是 797ea90） |
+
+注意：`.github/` 不在忽略列表里，否则改了工作流自己反而得不到验证。
+
 ## 遗留待办
 
 - 本机 SSH key 未注册，若想以后免 token 推送，需要把 `id_ed25519.pub` 加到 GitHub。
