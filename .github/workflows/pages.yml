@@ -3,6 +3,11 @@ name: Deploy to GitHub Pages
 on:
   push:
     branches: [master]
+    # 纯文档改动不触发构建与部署：站点内容只由 src / 配置决定
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'memory/**'
   workflow_dispatch:
 
 permissions:
