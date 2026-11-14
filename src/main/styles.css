@@ -264,8 +264,17 @@ select {
 .curve-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   margin-bottom: 8px;
+}
+
+.curve-row .mode-select {
+  flex: 0 0 auto;
+  width: 84px;
+  padding: 6px 4px;
+  font-size: 11px;
+  font-family: inherit;
+  border-radius: 6px;
 }
 
 .swatch {

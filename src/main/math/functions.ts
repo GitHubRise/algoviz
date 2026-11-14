@@ -62,6 +62,8 @@ export const FUNCTIONS: Record<string, BuiltinFunction> = {
   },
   gauss: unary((x) => Math.exp(-x * x), '高斯 e^(-x²)'),
   logistic: unary((x) => 1 / (1 + Math.exp(-x)), '逻辑斯蒂'),
+  // 分段：if(条件, 真值, 假值)。编译期会走惰性求值，见 evaluate.ts
+  if: { fn: (c, a, b) => (c ? a : b), minArgs: 3, maxArgs: 3, summary: '分段：if(条件, 真值, 假值)' },
 };
 
 export const CONSTANTS: Record<string, number> = {
@@ -77,5 +79,5 @@ export function isFunction(name: string): boolean {
 
 /** 供界面展示的教程文本。 */
 export const FUNCTION_HINT =
-  'sin(x) · cos(x) · tan(x) · sqrt(x) · abs(x) · exp(x) · ln(x) · log(x) · ' +
-  'floor(x) · sign(x) · min(x,1) · max(x,0) · gauss(x) · logistic(x) · pi · e · t';
+  'sin · cos · tan · sqrt · abs · exp · ln · log · floor · sign · min · max · ' +
+  'gauss · logistic · if(条件, a, b) · pi · e · t · a · b';

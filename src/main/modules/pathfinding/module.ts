@@ -367,7 +367,11 @@ export class PathfindingModule implements VizModule {
     canvas.addEventListener('pointerdown', (ev) => {
       const cell = this.pickCell(ev, canvas);
       if (cell === null) return;
-      canvas.setPointerCapture(ev.pointerId);
+      try {
+        canvas.setPointerCapture(ev.pointerId);
+      } catch {
+        // 合成事件没有真实 pointerId，捕获失败不影响后续逻辑
+      }
 
       if (cell === this.grid.start) {
         this.dragging = 'start';

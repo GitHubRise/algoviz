@@ -43,7 +43,9 @@ function compileNode(node: Node, vars: string[]): (scope: Scope) => number {
     }
     case 'unary': {
       const inner = compileNode(node.arg, vars);
-      return node.op === '-' ? (scope) => -inner(scope) : (scope) => +inner(scope);
+      if (node.op === '-') return (scope) => -inner(scope);
+      if (node.op === '!') return (scope) => (inner(scope) ? 0 : 1);
+      return (scope) => +inner(scope);
     }
     case 'binary': {
       const l = compileNode(node.left, vars);
@@ -55,6 +57,15 @@ function compileNode(node: Node, vars: string[]): (scope: Scope) => number {
         case '/': return (s) => l(s) / r(s);
         case '%': return (s) => l(s) % r(s);
         case '^': return (s) => Math.pow(l(s), r(s));
+        // 比较与逻辑统一产出 0/1，方便直接参与算术
+        case '<': return (s) => (l(s) < r(s) ? 1 : 0);
+        case '>': return (s) => (l(s) > r(s) ? 1 : 0);
+        case '<=': return (s) => (l(s) <= r(s) ? 1 : 0);
+        case '>=': return (s) => (l(s) >= r(s) ? 1 : 0);
+        case '==': return (s) => (l(s) === r(s) ? 1 : 0);
+        case '!=': return (s) => (l(s) !== r(s) ? 1 : 0);
+        case '&&': return (s) => (l(s) && r(s) ? 1 : 0);
+        case '||': return (s) => (l(s) || r(s) ? 1 : 0);
       }
       throw new Error('未知运算符');
     }
@@ -71,6 +82,17 @@ function compileNode(node: Node, vars: string[]): (scope: Scope) => number {
         );
       }
       const args = node.args.map((a) => compileNode(a, vars));
+
+      // 分段是唯一需要惰性求值的函数：不被选中的分支不参与计算
+      if (node.name === 'if') {
+        const [cond, thenFn, elseFn] = args as [
+          (s: Scope) => number,
+          (s: Scope) => number,
+          (s: Scope) => number,
+        ];
+        return (s) => (cond(s) ? thenFn(s) : elseFn(s));
+      }
+
       const core = spec.fn;
       if (args.length === 1) {
         const a0 = args[0]!;

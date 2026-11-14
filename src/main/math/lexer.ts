@@ -16,7 +16,10 @@ export interface Token {
   num?: number;
 }
 
-const OPS = new Set(['+', '-', '*', '/', '^', '%', ',']);
+const OPS = new Set(['+', '-', '*', '/', '^', '%', ',', '<', '>', '!', '=', '&', '|']);
+
+/** 双字符运算符优先匹配 */
+const TWO_CHAR_OPS = new Set(['**', '<=', '>=', '==', '!=', '&&', '||']);
 
 export function tokenize(src: string): Token[] {
   const tokens: Token[] = [];
@@ -43,9 +46,10 @@ export function tokenize(src: string): Token[] {
       continue;
     }
     if (OPS.has(ch)) {
-      // 支持把 ** 当作幂运算
-      if (ch === '*' && src[i + 1] === '*') {
-        tokens.push({ type: 'op', value: '^', pos: i });
+      const pair = src.slice(i, i + 2);
+      if (TWO_CHAR_OPS.has(pair)) {
+        // ** 等价于 ^，其余原样保留
+        tokens.push({ type: 'op', value: pair === '**' ? '^' : pair, pos: i });
         i += 2;
         continue;
       }

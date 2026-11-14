@@ -6,26 +6,54 @@ export { ParseError } from './lexer';
 export type Node =
   | { kind: 'num'; value: number }
   | { kind: 'var'; name: string }
-  | { kind: 'unary'; op: '-' | '+'; arg: Node }
-  | { kind: 'binary'; op: '+' | '-' | '*' | '/' | '%' | '^'; left: Node; right: Node }
+  | { kind: 'unary'; op: '-' | '+' | '!'; arg: Node }
+  | { kind: 'binary'; op: BinOp; left: Node; right: Node }
   | { kind: 'call'; name: string; args: Node[] };
 
-type BinOp = '+' | '-' | '*' | '/' | '%' | '^';
+export type BinOp =
+  | '+'
+  | '-'
+  | '*'
+  | '/'
+  | '%'
+  | '^'
+  | '<'
+  | '>'
+  | '<='
+  | '>='
+  | '=='
+  | '!='
+  | '&&'
+  | '||';
 
-const BIN_OPS = new Set<string>(['+', '-', '*', '/', '%', '^']);
+/** 结合力：数字越大结合越紧。比较低于加减，逻辑低于比较。 */
+const BINDING: Record<BinOp, number> = {
+  '||': 2,
+  '&&': 3,
+  '<': 5,
+  '>': 5,
+  '<=': 5,
+  '>=': 5,
+  '==': 5,
+  '!=': 5,
+  '+': 10,
+  '-': 10,
+  '*': 20,
+  '/': 20,
+  '%': 20,
+  '^': 40,
+};
+
+const BP_MUL = BINDING['*'];
+const BP_UNARY = 25;
 
 function isBinOp(value: string): value is BinOp {
-  return BIN_OPS.has(value);
+  return Object.prototype.hasOwnProperty.call(BINDING, value);
 }
-
-const BP_ADD = 10;
-const BP_MUL = 20;
-const BP_UNARY = 25;
-const BP_POW = 40;
 
 /**
  * Pratt 解析器。
- * 支持隐式乘法（2x、2sin(x)、(x+1)(x-1)），^ 右结合，逗号仅用于函数实参。
+ * 支持隐式乘法（2x、2sin(x)）、^ 右结合、比较（< > <= >= == !=）、逻辑（&& || !）。
  */
 export class Parser {
   private tokens: Token[];
@@ -66,10 +94,9 @@ export class Parser {
 
       if (tok.type !== 'op') break;
 
-      // 词法层只会产出这六个运算符，这里的断言是安全的
-      const op = tok.value as BinOp;
+      const op = tok.value;
       if (!isBinOp(op)) break;
-      const bp = op === '^' ? BP_POW : op === '*' || op === '/' || op === '%' ? BP_MUL : BP_ADD;
+      const bp = BINDING[op];
       if (bp < minBp) break;
 
       this.next();
@@ -83,10 +110,11 @@ export class Parser {
 
   private parseUnary(): Node {
     const tok = this.peek();
-    if (tok.type === 'op' && (tok.value === '-' || tok.value === '+')) {
+    if (tok.type === 'op' && (tok.value === '-' || tok.value === '+' || tok.value === '!')) {
       this.next();
       const arg = this.parseExpr(BP_UNARY);
-      return tok.value === '-' ? { kind: 'unary', op: '-', arg } : arg;
+      if (tok.value === '+') return arg;
+      return { kind: 'unary', op: tok.value, arg };
     }
     return this.parsePrimary();
   }

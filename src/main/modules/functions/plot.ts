@@ -1,11 +1,19 @@
 import { Surface } from '../../core/surface';
 import { theme, font } from '../../core/theme';
 import type { Compiled, Scope } from '../../math/evaluate';
+import type { CurveMode } from '../../math/normalize';
 
 export interface CurveSpec {
   color: string;
   compiled: Compiled | null;
   visible: boolean;
+  mode: CurveMode;
+  /** 水平偏移（表达式里没用到 a 时由渲染层施加） */
+  a: number;
+  /** 垂直偏移（表达式里没用到 b 时由渲染层施加） */
+  b: number;
+  usesA: boolean;
+  usesB: boolean;
 }
 
 export interface PlotOptions {
@@ -15,17 +23,18 @@ export interface PlotOptions {
   showIntegral: boolean;
   integralA: number;
   integralB: number;
-  /** 鼠标在画布上的位置（CSS 像素），用于十字准星 */
   hover: { x: number; y: number } | null;
   /** 动画参数 t，随播放器进度变化 */
   t: number;
+  /** 正在被拖动的曲线（用于显示 a/b 读数） */
+  active: { index: number; a: number; b: number } | null;
 }
 
 /**
  * 函数绘图视图。
  *
- * 坐标变换用「中心点 + 每单位像素数」表达，天然保持 x/y 等比例，
- * 缩放时不会把圆压成椭圆。
+ * 坐标变换用「中心点 + 每单位像素数」表达，天然保持 x/y 等比例。
+ * 三种曲线共用同一套视图：y=f(x) 逐列采样、r(θ) 参数采样、F(x,y)=0 用 marching squares。
  */
 export class PlotView {
   readonly surface: Surface;
@@ -47,7 +56,6 @@ export class PlotView {
       if (this.lastWidth === 0 && this.lastHeight === 0) {
         this.scale = Math.min(width, height) / 11;
       } else {
-        // 保持可视范围不变，只按尺寸比例缩放
         const ratioX = width / Math.max(1, this.lastWidth);
         const ratioY = height / Math.max(1, this.lastHeight);
         this.scale *= Math.min(ratioX, ratioY);
@@ -102,14 +110,260 @@ export class PlotView {
 
     for (const curve of curves) {
       if (!curve.visible || !curve.compiled) continue;
-      this.drawCurve(curve, opts);
+      if (curve.mode === 'explicit') this.drawExplicit(curve, opts);
+      else if (curve.mode === 'polar') this.drawPolar(curve, opts);
+      else this.drawImplicit(curve, opts);
     }
 
     if (opts.showIntegral) this.drawIntegral(curves, opts);
     if (opts.showTangent) this.drawTangent(curves, opts);
     if (opts.hover) this.drawHover(curves, opts);
-    else surface.hint('滚轮缩放 · 拖拽平移 · 双击复位');
+    if (opts.active) this.drawActive(curves, opts);
+    else if (!opts.hover) surface.hint('滚轮缩放 · 拖拽曲线改 a/b · 空白处拖拽平移 · 双击复位');
   }
+
+  // ---------- 三条曲线路径 ----------
+
+  private xShift(curve: CurveSpec): number {
+    return curve.usesA ? 0 : curve.a;
+  }
+
+  private yShift(curve: CurveSpec): number {
+    return curve.usesB ? 0 : curve.b;
+  }
+
+  private drawExplicit(curve: CurveSpec, opts: PlotOptions): void {
+    const { ctx, width: W, height: H } = this.surface;
+    const compiled = curve.compiled!;
+    const scope: Scope = { x: 0, t: opts.t, a: curve.a, b: curve.b };
+    const xShift = this.xShift(curve);
+    const yShift = this.yShift(curve);
+    const stepPx = 0.75;
+    const jumpLimit = H * 1.6;
+
+    ctx.save();
+    ctx.strokeStyle = curve.color;
+    ctx.lineWidth = 2;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+
+    let drawing = false;
+    let prevSy = Number.NaN;
+    const left = this.screenToWorld(0, 0).x;
+    const worldPerPx = 1 / this.scale;
+
+    for (let px = 0; px <= W; px += stepPx) {
+      const x = left + px * worldPerPx;
+      scope.x = x - xShift;
+      const value = compiled.fn(scope);
+      const y = value + yShift;
+
+      if (!Number.isFinite(value) || !Number.isFinite(y)) {
+        drawing = false;
+        prevSy = Number.NaN;
+        continue;
+      }
+      const sy = this.worldToScreen(0, y).y;
+      if (sy < -H * 4 || sy > H * 5) {
+        drawing = false;
+        prevSy = Number.NaN;
+        continue;
+      }
+      if (drawing && Number.isFinite(prevSy) && Math.abs(sy - prevSy) > jumpLimit) {
+        drawing = false;
+      }
+      if (drawing) ctx.lineTo(px, sy);
+      else {
+        ctx.moveTo(px, sy);
+        drawing = true;
+      }
+      prevSy = sy;
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  /** 极坐标采样点（世界坐标），绘制与命中检测共用。 */
+  private polarPoints(curve: CurveSpec, t: number): Array<{ x: number; y: number }> {
+    const compiled = curve.compiled!;
+    const scope: Scope = { th: 0, t, a: curve.a, b: curve.b };
+    const xShift = this.xShift(curve);
+    const yShift = this.yShift(curve);
+    const steps = 1400;
+    const turns = 3;
+    const out: Array<{ x: number; y: number }> = [];
+
+    for (let i = 0; i <= steps; i++) {
+      const th = (i / steps) * Math.PI * 2 * turns;
+      scope.th = th;
+      const r = compiled.fn(scope);
+      if (!Number.isFinite(r) || Math.abs(r) > 1e6) {
+        out.push({ x: Number.NaN, y: Number.NaN });
+        continue;
+      }
+      out.push({ x: r * Math.cos(th) + xShift, y: r * Math.sin(th) + yShift });
+    }
+    return out;
+  }
+
+  private drawPolar(curve: CurveSpec, opts: PlotOptions): void {
+    const { ctx, width: W, height: H } = this.surface;
+    const points = this.polarPoints(curve, opts.t);
+
+    ctx.save();
+    ctx.strokeStyle = curve.color;
+    ctx.lineWidth = 2;
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+
+    let drawing = false;
+    for (const p of points) {
+      if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) {
+        drawing = false;
+        continue;
+      }
+      const s = this.worldToScreen(p.x, p.y);
+      if (s.x < -W * 2 || s.x > W * 3 || s.y < -H * 2 || s.y > H * 3) {
+        drawing = false;
+        continue;
+      }
+      if (drawing) ctx.lineTo(s.x, s.y);
+      else {
+        ctx.moveTo(s.x, s.y);
+        drawing = true;
+      }
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  /** F(x,y)=0：屏幕网格上的 marching squares，取符号变化的边交点。 */
+  private drawImplicit(curve: CurveSpec, opts: PlotOptions): void {
+    const { ctx, width: W, height: H } = this.surface;
+    const compiled = curve.compiled!;
+    const step = 8;
+    const cols = Math.ceil(W / step) + 1;
+    const rows = Math.ceil(H / step) + 1;
+    const vals = new Float32Array(cols * rows);
+    const scope: Scope = { x: 0, y: 0, t: opts.t, a: curve.a, b: curve.b };
+    const left = this.screenToWorld(0, 0).x;
+    const top = this.screenToWorld(0, 0).y;
+    const worldPerPx = 1 / this.scale;
+    const ax = this.xShift(curve);
+    const by = this.yShift(curve);
+
+    for (let j = 0; j < rows; j++) {
+      const wy = top - j * step * worldPerPx;
+      for (let i = 0; i < cols; i++) {
+        scope.x = left + i * step * worldPerPx - ax;
+        scope.y = wy - by;
+        vals[j * cols + i] = compiled.fn(scope);
+      }
+    }
+
+    ctx.save();
+    ctx.strokeStyle = hexToRgba(curve.color, 0.92);
+    ctx.lineWidth = 1.7;
+    ctx.beginPath();
+
+    for (let j = 0; j < rows - 1; j++) {
+      for (let i = 0; i < cols - 1; i++) {
+        const v00 = vals[j * cols + i]!;
+        const v10 = vals[j * cols + i + 1]!;
+        const v11 = vals[(j + 1) * cols + i + 1]!;
+        const v01 = vals[(j + 1) * cols + i]!;
+        if (
+          !Number.isFinite(v00) || !Number.isFinite(v10) ||
+          !Number.isFinite(v11) || !Number.isFinite(v01)
+        ) {
+          continue;
+        }
+
+        const pts: number[] = [];
+        const cross = (a: number, b: number, x1: number, y1: number, x2: number, y2: number): void => {
+          if ((a >= 0) === (b >= 0)) return;
+          const tt = a / (a - b);
+          pts.push(x1 + (x2 - x1) * tt, y1 + (y2 - y1) * tt);
+        };
+
+        cross(v00, v10, i * step, j * step, (i + 1) * step, j * step);
+        cross(v10, v11, (i + 1) * step, j * step, (i + 1) * step, (j + 1) * step);
+        cross(v11, v01, (i + 1) * step, (j + 1) * step, i * step, (j + 1) * step);
+        cross(v01, v00, i * step, (j + 1) * step, i * step, j * step);
+
+        if (pts.length >= 4) {
+          ctx.moveTo(pts[0]!, pts[1]!);
+          ctx.lineTo(pts[2]!, pts[3]!);
+        }
+        if (pts.length === 8) {
+          ctx.moveTo(pts[4]!, pts[5]!);
+          ctx.lineTo(pts[6]!, pts[7]!);
+        }
+      }
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  /** 命中检测：返回最近的可见曲线下标，找不到返回 -1。 */
+  pickCurve(curves: CurveSpec[], sx: number, sy: number, t: number): number {
+    let best = -1;
+    let bestDist = 14;
+    const worldX = this.screenToWorld(sx, 0).x;
+    const scope: Scope = { x: 0, y: 0, th: 0, t, a: 0, b: 0 };
+
+    curves.forEach((curve, index) => {
+      if (!curve.visible || !curve.compiled || curve.mode === 'implicit') return;
+
+      if (curve.mode === 'explicit') {
+        scope.a = curve.a;
+        scope.b = curve.b;
+        scope.x = worldX - this.xShift(curve);
+        const value = curve.compiled.fn(scope);
+        if (!Number.isFinite(value)) return;
+        const p = this.worldToScreen(worldX, value + this.yShift(curve));
+        const dist = Math.abs(p.y - sy);
+        if (dist < bestDist) {
+          bestDist = dist;
+          best = index;
+        }
+        return;
+      }
+
+      for (const point of this.polarPoints(curve, t)) {
+        if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) continue;
+        const p = this.worldToScreen(point.x, point.y);
+        const dist = Math.hypot(p.x - sx, p.y - sy);
+        if (dist < bestDist) {
+          bestDist = dist;
+          best = index;
+        }
+      }
+    });
+
+    return best;
+  }
+
+  private drawActive(curves: CurveSpec[], opts: PlotOptions): void {
+    const active = opts.active!;
+    const curve = curves[active.index];
+    if (!curve) return;
+    const { ctx } = this.surface;
+    ctx.save();
+    ctx.font = font.monoSmall;
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'top';
+    ctx.fillStyle = curve.color;
+    ctx.fillText(
+      `拖动中 · a=${formatSigned(active.a, 2)}  b=${formatSigned(active.b, 2)}`,
+      this.surface.width - 14,
+      14,
+    );
+    ctx.restore();
+  }
+
+  // ---------- 网格与坐标轴 ----------
 
   private drawGrid(step: number): void {
     const { ctx, width: W, height: H } = this.surface;
@@ -119,7 +373,6 @@ export class PlotView {
     const bottom = this.screenToWorld(0, H).y;
 
     ctx.lineWidth = 1;
-    // 细网格（主格 1/5）
     ctx.strokeStyle = theme.grid;
     ctx.beginPath();
     for (const minor of [0.2, 0.4, 0.6, 0.8]) {
@@ -137,7 +390,6 @@ export class PlotView {
     }
     ctx.stroke();
 
-    // 主网格
     ctx.strokeStyle = theme.gridMajor;
     ctx.beginPath();
     for (let x = Math.ceil(left / step) * step; x <= right; x += step) {
@@ -168,7 +420,6 @@ export class PlotView {
     ctx.lineTo(Math.round(axisX) + 0.5, H);
     ctx.stroke();
 
-    // 刻度数值
     ctx.font = font.monoSmall;
     ctx.fillStyle = theme.textFaint;
     ctx.textAlign = 'center';
@@ -198,7 +449,6 @@ export class PlotView {
       ctx.fillText(formatNumber(y, decimals), labelX, sy);
     }
 
-    // 原点
     if (axisX > 10 && axisX < W - 10 && axisY > 10 && axisY < H - 10) {
       ctx.fillStyle = theme.textDim;
       ctx.textAlign = 'right';
@@ -207,75 +457,32 @@ export class PlotView {
     }
   }
 
-  private drawCurve(curve: CurveSpec, opts: PlotOptions): void {
-    const { ctx, width: W, height: H } = this.surface;
-    const compiled = curve.compiled!;
-    const scope: Scope = { x: 0, t: opts.t };
-    const stepPx = 0.75;
-    const jumpLimit = H * 1.6;
-
-    ctx.save();
-    ctx.strokeStyle = curve.color;
-    ctx.lineWidth = 2;
-    ctx.lineJoin = 'round';
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-
-    let drawing = false;
-    let prevSy = Number.NaN;
-    const left = this.screenToWorld(0, 0).x;
-    const worldPerPx = 1 / this.scale;
-
-    for (let px = 0; px <= W; px += stepPx) {
-      const x = left + px * worldPerPx;
-      scope.x = x;
-      const y = compiled.fn(scope);
-
-      if (!Number.isFinite(y)) {
-        drawing = false;
-        prevSy = Number.NaN;
-        continue;
-      }
-      const sy = this.worldToScreen(0, y).y;
-      // 视口外的极端值不进路径，避免画布坐标爆炸
-      if (sy < -H * 4 || sy > H * 5) {
-        drawing = false;
-        prevSy = Number.NaN;
-        continue;
-      }
-      if (drawing && Number.isFinite(prevSy) && Math.abs(sy - prevSy) > jumpLimit) {
-        drawing = false; // 视为不连续（渐近线），断开路径
-      }
-      if (drawing) ctx.lineTo(px, sy);
-      else {
-        ctx.moveTo(px, sy);
-        drawing = true;
-      }
-      prevSy = sy;
-    }
-    ctx.stroke();
-    ctx.restore();
-  }
+  // ---------- 切线 / 积分 / 悬停 ----------
 
   private drawIntegral(curves: CurveSpec[], opts: PlotOptions): void {
     const a = Math.min(opts.integralA, opts.integralB);
     const b = Math.max(opts.integralA, opts.integralB);
-    const curve = curves.find((c) => c.visible && c.compiled);
+    const curve = curves.find((c) => c.visible && c.compiled && c.mode === 'explicit');
     if (!curve || b - a < 1e-9) return;
 
-    const { ctx, width: W, height: H } = this.surface;
-    const scope: Scope = { x: 0, t: opts.t };
+    const { ctx, height: H } = this.surface;
+    const scope: Scope = { x: 0, t: opts.t, a: curve.a, b: curve.b };
+    const xShift = this.xShift(curve);
+    const yShift = this.yShift(curve);
     const baseline = clamp(this.worldToScreen(0, 0).y, 0, H);
-    const steps = 260;
+
+    const evalAt = (x: number): number => {
+      scope.x = x - xShift;
+      return curve.compiled!.fn(scope) + yShift;
+    };
 
     ctx.save();
     ctx.beginPath();
     const x0 = this.worldToScreen(a, 0).x;
     let started = false;
-    for (let i = 0; i <= steps; i++) {
-      const x = a + ((b - a) * i) / steps;
-      scope.x = x;
-      const y = curve.compiled!.fn(scope);
+    for (let i = 0; i <= 260; i++) {
+      const x = a + ((b - a) * i) / 260;
+      const y = evalAt(x);
       if (!Number.isFinite(y)) continue;
       const p = this.worldToScreen(x, y);
       if (!started) {
@@ -286,7 +493,10 @@ export class PlotView {
         ctx.lineTo(p.x, p.y);
       }
     }
-    if (!started) return;
+    if (!started) {
+      ctx.restore();
+      return;
+    }
     ctx.lineTo(this.worldToScreen(b, 0).x, baseline);
     ctx.closePath();
     ctx.fillStyle = hexToRgba(curve.color, 0.14);
@@ -296,8 +506,7 @@ export class PlotView {
     ctx.setLineDash([4, 4]);
     ctx.lineWidth = 1;
     for (const edge of [a, b]) {
-      scope.x = edge;
-      const y = curve.compiled!.fn(scope);
+      const y = evalAt(edge);
       if (!Number.isFinite(y)) continue;
       const p = this.worldToScreen(edge, y);
       ctx.beginPath();
@@ -307,13 +516,11 @@ export class PlotView {
     }
     ctx.setLineDash([]);
 
-    // 数值（辛普森法）
     const n = 400;
     let sum = 0;
     for (let i = 0; i <= n; i++) {
       const x = a + ((b - a) * i) / n;
-      scope.x = x;
-      const y = curve.compiled!.fn(scope);
+      const y = evalAt(x);
       if (!Number.isFinite(y)) {
         sum = Number.NaN;
         break;
@@ -326,27 +533,32 @@ export class PlotView {
     ctx.fillStyle = curve.color;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'bottom';
-    const label = `∫ ${a}→${b} ≈ ${formatSigned(area)}`;
-    ctx.fillText(label, clamp(x0 + 8, 8, W - 150), clamp(this.worldToScreen(0, 0).y - 12, 22, H - 8));
+    ctx.fillText(
+      `∫ ${a}→${b} ≈ ${formatSigned(area)}`,
+      clamp(x0 + 8, 8, this.surface.width - 150),
+      clamp(this.worldToScreen(0, 0).y - 12, 22, H - 8),
+    );
     ctx.restore();
   }
 
   private drawTangent(curves: CurveSpec[], opts: PlotOptions): void {
-    const curve = curves.find((c) => c.visible && c.compiled);
+    const curve = curves.find((c) => c.visible && c.compiled && c.mode === 'explicit');
     if (!curve) return;
     const { ctx, width: W } = this.surface;
-    const scope: Scope = { x: 0, t: opts.t };
+    const scope: Scope = { x: 0, t: opts.t, a: curve.a, b: curve.b };
+    const xShift = this.xShift(curve);
+    const yShift = this.yShift(curve);
     const x0 = opts.tangentX;
-    scope.x = x0;
-    const y0 = curve.compiled!.fn(scope);
+    const evalAt = (x: number): number => {
+      scope.x = x - xShift;
+      return curve.compiled!.fn(scope) + yShift;
+    };
+
+    const y0 = evalAt(x0);
     if (!Number.isFinite(y0)) return;
 
     const h = Math.max(1e-5, Math.abs(x0) * 1e-5);
-    scope.x = x0 + h;
-    const y1 = curve.compiled!.fn(scope);
-    scope.x = x0 - h;
-    const y2 = curve.compiled!.fn(scope);
-    const slope = (y1 - y2) / (2 * h);
+    const slope = (evalAt(x0 + h) - evalAt(x0 - h)) / (2 * h);
     if (!Number.isFinite(slope)) return;
 
     const leftX = this.screenToWorld(0, 0).x;
@@ -382,7 +594,7 @@ export class PlotView {
     const { ctx, width: W, height: H } = this.surface;
     const hover = opts.hover!;
     const world = this.screenToWorld(hover.x, hover.y);
-    const scope: Scope = { x: world.x, t: opts.t };
+    const scope: Scope = { x: 0, t: opts.t, a: 0, b: 0 };
 
     ctx.save();
     ctx.strokeStyle = 'rgba(230,237,247,0.22)';
@@ -398,9 +610,13 @@ export class PlotView {
 
     const lines: string[] = [`x = ${formatSigned(world.x, 4)}`];
     for (const curve of curves) {
-      if (!curve.visible || !curve.compiled) continue;
-      const y = curve.compiled.fn(scope);
-      if (!Number.isFinite(y)) continue;
+      if (!curve.visible || !curve.compiled || curve.mode !== 'explicit') continue;
+      scope.a = curve.a;
+      scope.b = curve.b;
+      scope.x = world.x - this.xShift(curve);
+      const value = curve.compiled.fn(scope);
+      if (!Number.isFinite(value)) continue;
+      const y = value + this.yShift(curve);
       const p = this.worldToScreen(world.x, y);
       ctx.fillStyle = curve.color;
       ctx.beginPath();
@@ -412,7 +628,7 @@ export class PlotView {
     ctx.font = font.monoSmall;
     const padX = 9;
     const lineH = 16;
-    const boxW = 148;
+    const boxW = 152;
     const boxH = lines.length * lineH + 12;
     const bx = clamp(hover.x + 16, 8, W - boxW - 8);
     const by = clamp(hover.y + 16, 8, H - boxH - 8);
@@ -423,7 +639,6 @@ export class PlotView {
     ctx.fill();
     ctx.stroke();
 
-    ctx.fillStyle = theme.textDim;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
     lines.forEach((line, i) => {
