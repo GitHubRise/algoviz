@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.local
+*.tsbuildinfo
+.DS_Store
+.vscode/
+
+# 临时物：按 general-policies 的 temp.md 约定，永不入仓
+temp/

@@ -1,0 +1,9 @@
+# pnpm 10 起，onlyBuiltDependencies 等设置从 package.json 的 "pnpm" 字段迁到这里。
+# esbuild 需要执行安装脚本才能落地平台二进制。
+onlyBuiltDependencies:
+  - esbuild
+
+# 本机 Nexus（127.0.0.1:8081）未常驻，pnpm 每次执行脚本前的依赖校验会因
+# ERR_PNPM_IGNORED_BUILDS 直接判失败。依赖已由 pnpm install 校验过，
+# 这里关闭运行前校验，避免 CI/脚本误判。
+verifyDepsBeforeRun: false
