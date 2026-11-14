@@ -8,7 +8,7 @@
 
 | 模块 | 看什么 | 能操作什么 |
 |---|---|---|
-| 函数 | 表达式曲线、切线、定积分阴影 | 输入表达式、缩放平移、动参 t |
+| 函数 | y=f(x)、隐函数 F(x,y)=0、极坐标 r(θ)、分段，切线、定积分阴影 | 输入或**粘贴**公式、拖曲线改 a/b、缩放平移、动参 t |
 | 排序 | 冒泡/插入/选择/归并/快速的分步状态 | 切算法、调规模、单步回退 |
 | 寻路 | BFS/DFS/Dijkstra/A* 的扩展过程与最终路径 | 画墙、拖起终点、生成迷宫 |
 
@@ -19,7 +19,7 @@ pnpm install
 pnpm dev        # 开发服务器
 pnpm build      # 类型检查 + 生产构建（dist/）
 pnpm preview    # 预览构建产物
-pnpm test       # 46 条判定表用例
+pnpm test       # 68 条判定表用例
 pnpm spike      # 探路脚本：解析器 + 帧规模实测
 ```
 
@@ -47,7 +47,7 @@ algoviz/
 
 ## 技术约束
 
-- Vite 6 + TypeScript 5.6 + Canvas 2D，**运行时零依赖**；产物约 47 KB（gzip 17 KB）。
+- Vite 6 + TypeScript 5.6 + Canvas 2D，**运行时零依赖**；产物约 57 KB（gzip 21 KB）。
 - 不引入 UI 框架：三个模块的 DOM 差异不足以抵消框架的抽象成本。
 - 表达式用自写 Pratt 解析器编译成闭包，不使用 `eval` / `new Function`。
 
