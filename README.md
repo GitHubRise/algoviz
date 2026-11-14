@@ -1,5 +1,8 @@
 # AlgoViz
 
+[![Deploy](https://github.com/GitHubRise/algoviz/actions/workflows/pages.yml/badge.svg)](https://github.com/GitHubRise/algoviz/actions/workflows/pages.yml)
+[![在线演示](https://img.shields.io/badge/demo-githubrise.github.io%2Falgoviz-4cc9f0)](https://githubrise.github.io/algoviz/)
+
 > 函数与算法的可视化实验室：把「连续曲线的描迹」和「离散算法的轨迹」放进同一条时间轴。
 >
 > 在线演示：<https://githubrise.github.io/algoviz/>
