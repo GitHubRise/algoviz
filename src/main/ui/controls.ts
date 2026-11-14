@@ -119,12 +119,16 @@ export function createStats(labels: string[]): StatsHandle {
   };
 }
 
-/** 播放器：进度条、播放/暂停、单步、倍速 */
-export function createTransportBar(t: Transport): { el: HTMLElement; sync(): void } {
+/** 播放器：进度条、播放/暂停、单步、倍速、导出 PNG */
+export function createTransportBar(
+  t: Transport,
+  opts: { onExport?: () => void } = {},
+): { el: HTMLElement; sync(): void } {
   const playBtn = el('button', { class: 'play', type: 'button', title: '播放 / 暂停（空格）', text: '▶' });
   const backBtn = el('button', { type: 'button', title: '单步后退（←）', text: '‹' });
   const fwdBtn = el('button', { type: 'button', title: '单步前进（→）', text: '›' });
   const resetBtn = el('button', { type: 'button', title: '回到起点', text: '↺' });
+  const exportBtn = el('button', { type: 'button', title: '导出当前画布为 PNG', text: '⤓' });
 
   const range = el('input', {
     class: 'scrub',
@@ -156,6 +160,7 @@ export function createTransportBar(t: Transport): { el: HTMLElement; sync(): voi
     t.pause();
     t.seek(0);
   });
+  exportBtn.addEventListener('click', () => opts.onExport?.());
 
   let dragging = false;
   range.addEventListener('pointerdown', () => {
@@ -177,6 +182,7 @@ export function createTransportBar(t: Transport): { el: HTMLElement; sync(): voi
     range,
     speedLabel,
     speed,
+    exportBtn,
     readout,
   );
 

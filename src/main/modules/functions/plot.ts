@@ -1,11 +1,14 @@
 import { Surface } from '../../core/surface';
 import { theme, font } from '../../core/theme';
+import { findExtrema, findRoots } from '../../math/analysis';
 import type { Compiled, Scope } from '../../math/evaluate';
 import type { CurveMode } from '../../math/normalize';
 
 export interface CurveSpec {
   color: string;
   compiled: Compiled | null;
+  /** 参数方程的 y 分量 */
+  compiledY: Compiled | null;
   visible: boolean;
   mode: CurveMode;
   /** 水平偏移（表达式里没用到 a 时由渲染层施加） */
@@ -14,6 +17,8 @@ export interface CurveSpec {
   b: number;
   usesA: boolean;
   usesB: boolean;
+  /** 原始表达式，分析标注的标题用 */
+  source: string;
 }
 
 export interface PlotOptions {
@@ -28,6 +33,10 @@ export interface PlotOptions {
   t: number;
   /** 正在被拖动的曲线（用于显示 a/b 读数） */
   active: { index: number; a: number; b: number } | null;
+  /** 叠加导数曲线 f′(x) */
+  showDerivative: boolean;
+  /** 标注零点与极值 */
+  showAnalysis: boolean;
 }
 
 /**
@@ -112,9 +121,12 @@ export class PlotView {
       if (!curve.visible || !curve.compiled) continue;
       if (curve.mode === 'explicit') this.drawExplicit(curve, opts);
       else if (curve.mode === 'polar') this.drawPolar(curve, opts);
+      else if (curve.mode === 'parametric') this.drawParametric(curve, opts);
       else this.drawImplicit(curve, opts);
     }
 
+    if (opts.showDerivative) this.drawDerivatives(curves, opts);
+    if (opts.showAnalysis) this.drawAnalysis(curves, opts);
     if (opts.showIntegral) this.drawIntegral(curves, opts);
     if (opts.showTangent) this.drawTangent(curves, opts);
     if (opts.hover) this.drawHover(curves, opts);
@@ -238,6 +250,172 @@ export class PlotView {
     ctx.restore();
   }
 
+  /** 参数方程采样点；u ∈ [0,4π] 扫两圈，够闭合常见图形。 */
+  private parametricPoints(curve: CurveSpec, t: number): Array<{ x: number; y: number }> {
+    const fx = curve.compiled;
+    const fy = curve.compiledY;
+    if (!fx || !fy) return [];
+    const scope: Scope = { u: 0, t, a: curve.a, b: curve.b };
+    const xShift = this.xShift(curve);
+    const yShift = this.yShift(curve);
+    const steps = 1200;
+    const out: Array<{ x: number; y: number }> = [];
+
+    for (let i = 0; i <= steps; i++) {
+      scope.u = (i / steps) * Math.PI * 4;
+      const x = fx.fn(scope);
+      const y = fy.fn(scope);
+      if (!Number.isFinite(x) || !Number.isFinite(y) || Math.abs(x) > 1e6 || Math.abs(y) > 1e6) {
+        out.push({ x: Number.NaN, y: Number.NaN });
+        continue;
+      }
+      out.push({ x: x + xShift, y: y + yShift });
+    }
+    return out;
+  }
+
+  private drawParametric(curve: CurveSpec, opts: PlotOptions): void {
+    const { ctx, width: W, height: H } = this.surface;
+    const points = this.parametricPoints(curve, opts.t);
+    if (points.length === 0) return;
+
+    ctx.save();
+    ctx.strokeStyle = curve.color;
+    ctx.lineWidth = 2;
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+
+    let drawing = false;
+    for (const p of points) {
+      if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) {
+        drawing = false;
+        continue;
+      }
+      const s = this.worldToScreen(p.x, p.y);
+      if (s.x < -W * 2 || s.x > W * 3 || s.y < -H * 2 || s.y > H * 3) {
+        drawing = false;
+        continue;
+      }
+      if (drawing) ctx.lineTo(s.x, s.y);
+      else {
+        ctx.moveTo(s.x, s.y);
+        drawing = true;
+      }
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  /** 显式曲线的导数叠加（虚线，数值中心差分）。 */
+  private drawDerivatives(curves: CurveSpec[], opts: PlotOptions): void {
+    const { ctx, width: W, height: H } = this.surface;
+    const scope: Scope = { x: 0, t: opts.t, a: 0, b: 0 };
+    const left = this.screenToWorld(0, 0).x;
+    const worldPerPx = 1 / this.scale;
+
+    ctx.save();
+    ctx.lineWidth = 1.4;
+    ctx.setLineDash([5, 4]);
+
+    for (const curve of curves) {
+      if (!curve.visible || !curve.compiled || curve.mode !== 'explicit') continue;
+      const compiled = curve.compiled;
+      const xShift = this.xShift(curve);
+      const evalAt = (x: number): number => {
+        scope.a = curve.a;
+        scope.b = curve.b;
+        scope.x = x - xShift;
+        return compiled.fn(scope);
+      };
+
+      ctx.strokeStyle = hexToRgba(curve.color, 0.5);
+      ctx.beginPath();
+      let drawing = false;
+      let prevSy = Number.NaN;
+
+      for (let px = 0; px <= W; px += 1.2) {
+        const x = left + px * worldPerPx;
+        const h = Math.max(1e-4, Math.abs(x) * 1e-4);
+        const slope = (evalAt(x + h) - evalAt(x - h)) / (2 * h);
+        if (!Number.isFinite(slope)) {
+          drawing = false;
+          prevSy = Number.NaN;
+          continue;
+        }
+        const sy = this.worldToScreen(0, slope).y;
+        if (sy < -H * 4 || sy > H * 5) {
+          drawing = false;
+          prevSy = Number.NaN;
+          continue;
+        }
+        if (drawing && Number.isFinite(prevSy) && Math.abs(sy - prevSy) > H * 1.6) drawing = false;
+        if (drawing) ctx.lineTo(px, sy);
+        else {
+          ctx.moveTo(px, sy);
+          drawing = true;
+        }
+        prevSy = sy;
+      }
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  /** 零点与极值标注。 */
+  private drawAnalysis(curves: CurveSpec[], opts: PlotOptions): void {
+    const { ctx, width: W } = this.surface;
+    const scope: Scope = { x: 0, t: opts.t, a: 0, b: 0 };
+    const left = this.screenToWorld(0, 0).x;
+    const right = this.screenToWorld(W, 0).x;
+    const samples = Math.max(240, Math.min(800, Math.floor(W / 2)));
+
+    ctx.save();
+    ctx.font = font.monoSmall;
+
+    for (const curve of curves) {
+      if (!curve.visible || !curve.compiled || curve.mode !== 'explicit') continue;
+      const compiled = curve.compiled;
+      const xShift = this.xShift(curve);
+      const yShift = this.yShift(curve);
+      const f = (x: number): number => {
+        scope.a = curve.a;
+        scope.b = curve.b;
+        scope.x = x - xShift;
+        return compiled.fn(scope) + yShift;
+      };
+
+      for (const root of findRoots(f, left, right, samples)) {
+        const p = this.worldToScreen(root.x, root.y);
+        ctx.strokeStyle = curve.color;
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 3.6, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
+      for (const mark of findExtrema(f, left, right, samples)) {
+        const p = this.worldToScreen(mark.x, mark.y);
+        ctx.fillStyle = curve.color;
+        ctx.beginPath();
+        const r = 3.4;
+        ctx.moveTo(p.x, p.y - r);
+        ctx.lineTo(p.x + r, p.y);
+        ctx.lineTo(p.x, p.y + r);
+        ctx.lineTo(p.x - r, p.y);
+        ctx.closePath();
+        ctx.fill();
+
+        const label = `${mark.kind === 'max' ? 'max' : 'min'} (${formatSigned(mark.x, 2)}, ${formatSigned(mark.y, 2)})`;
+        ctx.fillStyle = theme.textDim;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = mark.kind === 'max' ? 'bottom' : 'top';
+        ctx.fillText(label, p.x, p.y + (mark.kind === 'max' ? -8 : 8));
+      }
+    }
+    ctx.restore();
+  }
+
   /** F(x,y)=0：屏幕网格上的 marching squares，取符号变化的边交点。 */
   private drawImplicit(curve: CurveSpec, opts: PlotOptions): void {
     const { ctx, width: W, height: H } = this.surface;
@@ -331,7 +509,11 @@ export class PlotView {
         return;
       }
 
-      for (const point of this.polarPoints(curve, t)) {
+      const points = curve.mode === 'parametric'
+        ? this.parametricPoints(curve, t)
+        : this.polarPoints(curve, t);
+
+      for (const point of points) {
         if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) continue;
         const p = this.worldToScreen(point.x, point.y);
         const dist = Math.hypot(p.x - sx, p.y - sy);

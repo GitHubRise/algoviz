@@ -1,6 +1,7 @@
 import { el } from '../../core/dom';
 import { Surface } from '../../core/surface';
 import { theme } from '../../core/theme';
+import { decodeShare, encodeShare } from '../../core/share';
 import { compileSource, validate } from '../../math/evaluate';
 import { FUNCTION_HINT } from '../../math/functions';
 import { normalizeFormulaBlock, type CurveMode } from '../../math/normalize';
@@ -11,10 +12,13 @@ import { PlotView, type CurveSpec, type PlotOptions } from './plot';
 
 interface CurveEntry {
   source: string;
+  /** 参数方程的 y 分量 */
+  sourceY: string;
   mode: CurveMode;
   color: string;
   visible: boolean;
   compiled: Compiled | null;
+  compiledY: Compiled | null;
   /** 拖动产生的水平/垂直偏移；表达式里没用到时由渲染层施加 */
   a: number;
   b: number;
@@ -25,6 +29,7 @@ interface CurveEntry {
 interface Preset {
   label: string;
   source: string;
+  sourceY?: string;
   mode: CurveMode;
 }
 
@@ -36,12 +41,14 @@ const PRESETS: Preset[] = [
   { label: '分段', source: 'if(x < 0, x^2, sqrt(x))', mode: 'explicit' },
   { label: '圆（隐）', source: 'x^2 + y^2 - 9', mode: 'implicit' },
   { label: '玫瑰线（极）', source: '3cos(5th)', mode: 'polar' },
+  { label: '李萨如（参）', source: '3cos(2u)', sourceY: '3sin(3u)', mode: 'parametric' },
 ];
 
 const MODE_LABELS: Record<CurveMode, string> = {
   explicit: 'y = f(x)',
   implicit: 'F(x,y) = 0',
   polar: 'r(θ)',
+  parametric: 'x(u), y(u)',
 };
 
 /** 各模式下允许出现的变量（其余标黄提示「按变量处理」） */
@@ -49,6 +56,7 @@ const MODE_VARS: Record<CurveMode, string[]> = {
   explicit: ['x', 't', 'a', 'b'],
   implicit: ['x', 'y', 't', 'a', 'b'],
   polar: ['th', 't', 'a', 'b'],
+  parametric: ['u', 't', 'a', 'b'],
 };
 
 const MAX_CURVES = 5;
@@ -66,6 +74,7 @@ export class FunctionsModule implements VizModule {
 
   private curves: CurveEntry[] = [];
   private inputs: HTMLInputElement[] = [];
+  private yInputs: HTMLInputElement[] = [];
   private selects: HTMLSelectElement[] = [];
   private curveList!: HTMLElement;
   private errorEl: HTMLElement;
@@ -73,6 +82,8 @@ export class FunctionsModule implements VizModule {
   private showGrid = true;
   private showTangent = false;
   private showIntegral = true;
+  private showDerivative = false;
+  private showAnalysis = false;
   private tangentX = 1;
   private integralA = -1;
   private integralB = 1;
@@ -85,8 +96,15 @@ export class FunctionsModule implements VizModule {
   private stats!: ReturnType<typeof createStats>;
   private tangentSlider!: ReturnType<typeof slider>;
   private fittedScale = false;
+  private restoredFromHash = false;
 
-  constructor(ctx: ModuleContext, initial: Array<{ source: string; mode?: CurveMode }> = [
+  constructor(ctx: ModuleContext, initial: Array<{
+    source: string;
+    sourceY?: string;
+    mode?: CurveMode;
+    a?: number;
+    b?: number;
+  }> = [
     { source: 'sin(x)' },
     { source: '0.15x^2 - 2' },
   ]) {
@@ -97,7 +115,15 @@ export class FunctionsModule implements VizModule {
     this.plot = new PlotView(this.surface);
     this.errorEl = el('p', { class: 'error-text' });
 
-    this.curves = initial.map((entry, i) => this.makeEntry(entry.source, entry.mode ?? 'explicit', i));
+    const seed = this.readHash() ?? initial;
+    this.curves = seed.map((entry, i) => this.makeEntry(
+      entry.source,
+      entry.mode ?? 'explicit',
+      i,
+      entry.sourceY ?? '',
+      entry.a ?? 0,
+      entry.b ?? 0,
+    ));
 
     this.panel = this.buildPanel();
     this.bindCanvas(canvas);
@@ -111,6 +137,7 @@ export class FunctionsModule implements VizModule {
     if (!this.fittedScale) {
       this.plot.reset();
       this.fittedScale = true;
+      if (this.restoredFromHash) this.fitY();
     }
     this.render(this.ctx.transport.progress);
   }
@@ -137,6 +164,8 @@ export class FunctionsModule implements VizModule {
       hover: this.hover,
       t: progress,
       active: this.active,
+      showDerivative: this.showDerivative,
+      showAnalysis: this.showAnalysis,
     };
     this.plot.draw(this.specs(), opts);
     const visible = this.curves.filter((c) => c.visible && c.compiled).length;
@@ -145,15 +174,17 @@ export class FunctionsModule implements VizModule {
 
   // ---------- 数据 ----------
 
-  private makeEntry(source: string, mode: CurveMode, index: number): CurveEntry {
+  private makeEntry(source: string, mode: CurveMode, index: number, sourceY = '', a = 0, b = 0): CurveEntry {
     const entry: CurveEntry = {
       source,
+      sourceY,
       mode,
       color: theme.curve[index % theme.curve.length]!,
       visible: true,
       compiled: null,
-      a: 0,
-      b: 0,
+      compiledY: null,
+      a,
+      b,
       usesA: false,
       usesB: false,
     };
@@ -169,10 +200,30 @@ export class FunctionsModule implements VizModule {
       return { ok: false, message: result.ok ? '表达式为空' : result.message };
     }
     entry.compiled = compileSource(entry.source);
-    entry.usesA = entry.compiled.variables.includes('a');
-    entry.usesB = entry.compiled.variables.includes('b');
+
+    if (entry.mode === 'parametric') {
+      const yResult = validate(entry.sourceY);
+      if (!yResult.ok || entry.sourceY.trim() === '') {
+        entry.compiledY = null;
+        return { ok: false, message: yResult.ok ? 'y(u) 表达式为空' : yResult.message };
+      }
+      entry.compiledY = compileSource(entry.sourceY);
+    } else {
+      entry.compiledY = null;
+    }
+
+    const variables = [...result.variables];
+    const yCompiled = entry.compiledY;
+    if (yCompiled) {
+      for (const name of yCompiled.variables) {
+        if (!variables.includes(name)) variables.push(name);
+      }
+    }
+
+    entry.usesA = variables.includes('a');
+    entry.usesB = variables.includes('b');
     const allowed = MODE_VARS[entry.mode];
-    const unknown = result.variables.filter((name) => !allowed.includes(name));
+    const unknown = variables.filter((name) => !allowed.includes(name));
     if (unknown.length > 0) {
       return { ok: true, message: `按变量处理：${unknown.join(', ')}（当前取值为 0）` };
     }
@@ -183,6 +234,8 @@ export class FunctionsModule implements VizModule {
     return this.curves.map((c) => ({
       color: c.color,
       compiled: c.visible ? c.compiled : null,
+      compiledY: c.visible ? c.compiledY : null,
+      source: c.source,
       visible: c.visible,
       mode: c.mode,
       a: c.a,
@@ -202,8 +255,8 @@ export class FunctionsModule implements VizModule {
       el('p', {
         class: 'panel-sub',
         text:
-          '支持 y=f(x)、隐函数 F(x,y)=0、极坐标 r(θ) 与分段 if(…)。' +
-          '拖动曲线上下左右移动会改写 a、b；也可以直接粘贴公式。',
+          '四种曲线：y=f(x)、隐函数 F(x,y)=0、极坐标 r(θ)、参数方程 x(u),y(u)。' +
+          '拖动曲线会改写 a、b；可以直接粘贴公式；也能把当前图形生成分享链接。',
       }),
     );
 
@@ -232,7 +285,7 @@ export class FunctionsModule implements VizModule {
           ...PRESETS.map((preset) =>
             button(preset.label, () => {
               const target = this.curves.length > 1 ? 1 : 0;
-              this.applyFormula(target, preset.source, preset.mode);
+              this.applyFormula(target, preset.source, preset.mode, preset.sourceY ?? '');
             }),
           ),
         ),
@@ -252,6 +305,14 @@ export class FunctionsModule implements VizModule {
       }),
       toggle('定积分填充', this.showIntegral, (v) => {
         this.showIntegral = v;
+        this.ctx.invalidate();
+      }),
+      toggle('导数曲线 f′', this.showDerivative, (v) => {
+        this.showDerivative = v;
+        this.ctx.invalidate();
+      }),
+      toggle('标注零点与极值', this.showAnalysis, (v) => {
+        this.showAnalysis = v;
         this.ctx.invalidate();
       }),
     );
@@ -311,6 +372,19 @@ export class FunctionsModule implements VizModule {
 
     const stats = createStats(['可见曲线', '缩放']);
     this.stats = stats;
+
+    panel.append(
+      section(
+        '分享',
+        el(
+          'div',
+          { class: 'btn-row' },
+          button('复制分享链接', () => this.copyShareLink(), { primary: true }),
+        ),
+        el('p', { class: 'note-text', text: '把当前所有曲线的表达式、类型与 a/b 编码进 URL 的 # 之后。' }),
+      ),
+    );
+
     panel.append(section('状态', stats.el, el('p', { class: 'note-text', text: FUNCTION_HINT })));
 
     return panel;
@@ -344,6 +418,20 @@ export class FunctionsModule implements VizModule {
       this.applyPastedText(text, index);
     });
 
+    const yLabel = el('label', { class: 'sr-only', text: `参数方程 y 分量 ${index + 1}` });
+    const yInput = el('input', {
+      type: 'text',
+      class: 'curve-y-input',
+      id: `curve-expr-y-${index}`,
+      value: curve.sourceY,
+      placeholder: 'y(u) = …',
+      spellcheck: 'false',
+    });
+    yLabel.htmlFor = yInput.id;
+    yInput.hidden = curve.mode !== 'parametric';
+    yLabel.hidden = yInput.hidden;
+    yInput.addEventListener('input', () => this.onYInput(index, yInput));
+
     const modeLabel = el('label', { class: 'sr-only', text: `曲线 ${index + 1} 的类型` });
     const select = el('select', {
       class: 'mode-select',
@@ -352,17 +440,22 @@ export class FunctionsModule implements VizModule {
       'aria-label': `曲线 ${index + 1} 的类型`,
     });
     modeLabel.htmlFor = `curve-mode-${index}`;
-    for (const mode of ['explicit', 'implicit', 'polar'] as CurveMode[]) {
+    for (const mode of ['explicit', 'implicit', 'polar', 'parametric'] as CurveMode[]) {
       select.append(el('option', { value: mode, text: MODE_LABELS[mode] }));
     }
     select.value = curve.mode;
     select.addEventListener('change', () => {
       curve.mode = select.value as CurveMode;
+      const isParametric = curve.mode === 'parametric';
+      yInput.hidden = !isParametric;
+      yLabel.hidden = !isParametric;
       this.onInput(index, input);
     });
 
-    const row = el('div', { class: 'curve-row' }, swatch, modeLabel, select, label, input);
+    const exprs = el('div', { class: 'curve-exprs' }, label, input, yLabel, yInput);
+    const row = el('div', { class: 'curve-row' }, swatch, modeLabel, select, exprs);
     this.inputs.push(input);
+    this.yInputs.push(yInput);
     this.selects.push(select);
     this.curveList.append(row);
   }
@@ -386,23 +479,97 @@ export class FunctionsModule implements VizModule {
     curve.source = input.value;
     const result = this.refresh(curve);
     input.classList.toggle('invalid', !result.ok);
-    this.errorEl.textContent = result.ok ? result.message : result.message;
+    this.errorEl.textContent = result.message;
     this.errorEl.style.color = result.ok ? theme.compare : theme.danger;
     this.ctx.invalidate();
   }
 
-  private applyFormula(index: number, source: string, mode: CurveMode): void {
+  private onYInput(index: number, input: HTMLInputElement): void {
+    const curve = this.curves[index];
+    if (!curve) return;
+    curve.sourceY = input.value;
+    const result = this.refresh(curve);
+    input.classList.toggle('invalid', !result.ok);
+    this.errorEl.textContent = result.message;
+    this.errorEl.style.color = result.ok ? theme.compare : theme.danger;
+    this.ctx.invalidate();
+  }
+
+  private applyFormula(index: number, source: string, mode: CurveMode, sourceY = ''): void {
     const curve = this.curves[index];
     const input = this.inputs[index];
+    const yInput = this.yInputs[index];
     if (!curve || !input) return;
     curve.mode = mode;
     curve.source = source;
+    curve.sourceY = sourceY;
     curve.a = 0;
     curve.b = 0;
     input.value = source;
+    if (yInput) {
+      yInput.value = sourceY;
+      yInput.hidden = mode !== 'parametric';
+    }
     const select = this.selects[index];
     if (select) select.value = mode;
     this.onInput(index, input);
+  }
+
+  // ---------- 分享 ----------
+
+  private copyShareLink(): void {
+    const state = {
+      v: 1,
+      curves: this.curves.map((c) => ({
+        s: c.source,
+        y: c.sourceY || undefined,
+        m: c.mode,
+        a: round2(c.a),
+        b: round2(c.b),
+        on: c.visible,
+      })),
+    };
+    const hash = `#${encodeShare(state)}`;
+    history.replaceState(null, '', hash);
+    const url = location.href;
+
+    navigator.clipboard
+      .writeText(url)
+      .then(() => {
+        this.errorEl.textContent = '分享链接已复制到剪贴板';
+        this.errorEl.style.color = theme.accent;
+      })
+      .catch(() => {
+        this.errorEl.textContent = `复制失败，手动复制地址栏：${url}`;
+        this.errorEl.style.color = theme.compare;
+      });
+  }
+
+  /** 从 URL hash 还原曲线；解析失败就返回 null，退回默认值。 */
+  private readHash(): Array<{ source: string; sourceY?: string; mode?: CurveMode; a?: number; b?: number }> | null {
+    const raw = location.hash.replace(/^#/, '');
+    if (!raw) return null;
+    const state = decodeShare<{
+      v?: number;
+      curves?: Array<{ s?: unknown; y?: unknown; m?: unknown; a?: unknown; b?: unknown; on?: unknown }>;
+    }>(raw);
+    if (!state || !Array.isArray(state.curves) || state.curves.length === 0) return null;
+
+    const modes: CurveMode[] = ['explicit', 'implicit', 'polar', 'parametric'];
+    const parsed = state.curves
+      .filter((c) => typeof c?.s === 'string')
+      .slice(0, MAX_CURVES)
+      .map((c) => ({
+        source: String(c.s),
+        sourceY: typeof c.y === 'string' ? c.y : '',
+        mode: modes.includes(c.m as CurveMode) ? (c.m as CurveMode) : 'explicit',
+        a: typeof c.a === 'number' && Number.isFinite(c.a) ? c.a : 0,
+        b: typeof c.b === 'number' && Number.isFinite(c.b) ? c.b : 0,
+      }));
+
+    if (parsed.length === 0) return null;
+    this.restoredFromHash = true;
+    return parsed;
   }
 
   // ---------- 粘贴 ----------
@@ -427,7 +594,7 @@ export class FunctionsModule implements VizModule {
       const index = startIndex + offset;
       if (index >= this.curves.length) this.addCurve();
       if (index >= this.curves.length) return;
-      this.applyFormula(index, entry.source, entry.mode);
+      this.applyFormula(index, entry.source, entry.mode, entry.sourceY ?? '');
     });
 
     this.errorEl.textContent = notes.join(' · ');
@@ -575,4 +742,8 @@ export class FunctionsModule implements VizModule {
 
     canvas.style.cursor = 'crosshair';
   }
+}
+
+function round2(v: number): number {
+  return Math.round(v * 100) / 100;
 }

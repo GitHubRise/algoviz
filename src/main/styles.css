@@ -277,6 +277,19 @@ select {
   border-radius: 6px;
 }
 
+/* 表达式输入区：参数方程时上下两条 */
+.curve-exprs {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.curve-row .curve-y-input {
+  font-size: 12px;
+}
+
 .swatch {
   flex: 0 0 auto;
   width: 10px;

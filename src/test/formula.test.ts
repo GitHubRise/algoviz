@@ -107,4 +107,17 @@ describe('公式粘贴规范化', () => {
     const r = normalizeFormula('y=');
     expect(r.source).toBe('');
   });
+
+  it('T-N16 参数方程识别出两条表达式', () => {
+    const r = normalizeFormula('x=cos(u), y=sin(u)');
+    expect(r.mode).toBe('parametric');
+    expect(r.source).toBe('cos(u)');
+    expect(r.sourceY).toBe('sin(u)');
+  });
+
+  it('T-N17 只有 x= 时按普通表达式处理', () => {
+    const r = normalizeFormula('x=cos(u)');
+    expect(r.mode).toBe('explicit');
+    expect(r.source).toBe('cos(u)');
+  });
 });

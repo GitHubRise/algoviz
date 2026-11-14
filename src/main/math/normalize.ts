@@ -3,14 +3,17 @@
  *
  * 覆盖三类来源：纯文本（从网页/聊天里复制的 `y = sin x`）、LaTeX（`\frac{1}{2}`）、
  * 以及带 Unicode 数学符号的排版文本（`x²`、`√x`、`×`、全角括号）。
- * 同时根据前缀推断曲线类型：`y=` → 显式，`r=` → 极坐标，`F(x,y)=` 或含 x、y 的等式 → 隐函数。
+ * 同时根据前缀推断曲线类型：`y=` → 显式，`r=` → 极坐标，`F(x,y)=` 或含 x、y 的等式 → 隐函数，
+ * `x=…, y=…` → 参数方程。
  */
 
-export type CurveMode = 'explicit' | 'implicit' | 'polar';
+export type CurveMode = 'explicit' | 'implicit' | 'polar' | 'parametric';
 
 export interface NormalizedFormula {
   source: string;
   mode: CurveMode;
+  /** 参数方程的第二条表达式（y 分量） */
+  sourceY?: string;
   /** 是否发生过改写（供界面提示「已规范化」） */
   changed: boolean;
 }
@@ -69,6 +72,17 @@ export function normalizeFormula(raw: string): NormalizedFormula {
   // 前缀推断曲线类型
   let mode: CurveMode = 'explicit';
 
+  // 参数方程：x=…, y=…（两项都要有，缺一不成式）
+  const parametric = /^\s*x\s*=\s*([^,;]+?)\s*[,;]\s*y\s*=\s*(.+)$/i.exec(text);
+  if (parametric) {
+    return {
+      source: parametric[1]!.trim(),
+      sourceY: parametric[2]!.trim(),
+      mode: 'parametric',
+      changed: true,
+    };
+  }
+
   const explicit = text.replace(/^\s*(?:y|f\s*\(\s*x\s*\)|g\s*\(\s*x\s*\)|h\s*\(\s*x\s*\))\s*=\s*/i, '');
   const polar = text.replace(/^\s*(?:r|ρ)\s*=\s*/i, '');
   const implicit = text.replace(/^\s*[Ff]\s*\(\s*x\s*,\s*y\s*\)\s*=\s*/, '');
@@ -89,6 +103,9 @@ export function normalizeFormula(raw: string): NormalizedFormula {
       text = `${left}-(${right})`;
       mode = 'implicit';
     }
+  } else if (/^\s*x\s*=/.test(text)) {
+    // 只有 x=…：不成参数方程，按普通表达式取右值
+    text = text.replace(/^\s*x\s*=\s*/, '');
   }
 
   text = text.replace(/[;；]\s*$/, '').replace(/\s+/g, ' ').trim();

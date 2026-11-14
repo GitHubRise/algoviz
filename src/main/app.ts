@@ -51,7 +51,9 @@ export function createApp(root: HTMLElement): void {
     return btn;
   });
 
-  const { el: transportBar } = createTransportBar(transport);
+  const { el: transportBar } = createTransportBar(transport, {
+    onExport: () => exportActiveCanvas(),
+  });
 
   root.append(
     el(
@@ -96,6 +98,19 @@ export function createApp(root: HTMLElement): void {
 
   buttons.forEach((btn, i) => btn.setAttribute('aria-selected', String(i === activeIndex)));
   modules[0]!.activate();
+
+  /** 把当前模块的画布导出成 PNG（不依赖任何后端）。 */
+  function exportActiveCanvas(): void {
+    const mod = modules[activeIndex];
+    const canvas = mod?.stage.querySelector('canvas');
+    if (!canvas) return;
+    const link = document.createElement('a');
+    link.download = `algoviz-${mod!.id}.png`;
+    link.href = canvas.toDataURL('image/png');
+    document.body.append(link);
+    link.click();
+    link.remove();
+  }
 
   window.addEventListener('keydown', (ev) => {
     const target = ev.target as HTMLElement | null;
