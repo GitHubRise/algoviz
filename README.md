@@ -47,7 +47,7 @@ algoviz/
 
 ## 技术约束
 
-- Vite 6 + TypeScript 5.6 + Canvas 2D，**运行时零依赖**；产物约 46 KB（gzip 17 KB）。
+- Vite 6 + TypeScript 5.6 + Canvas 2D，**运行时零依赖**；产物约 47 KB（gzip 17 KB）。
 - 不引入 UI 框架：三个模块的 DOM 差异不足以抵消框架的抽象成本。
 - 表达式用自写 Pratt 解析器编译成闭包，不使用 `eval` / `new Function`。
 
