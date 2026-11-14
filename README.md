@@ -1,6 +1,8 @@
 # AlgoViz
 
 > 函数与算法的可视化实验室：把「连续曲线的描迹」和「离散算法的轨迹」放进同一条时间轴。
+>
+> 在线演示：<https://githubrise.github.io/algoviz/>
 
 ## 这是什么
 
