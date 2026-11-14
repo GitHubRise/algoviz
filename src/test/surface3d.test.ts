@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  contourSegments,
   createCamera,
   faceNormal,
   normalizePoints,
@@ -68,5 +69,34 @@ describe('三维投影', () => {
     expect(Math.max(...xs)).toBeCloseTo(1, 6);
     expect(Math.max(...zs)).toBeCloseTo(0.7, 6);
     expect(Math.min(...zs)).toBeCloseTo(-0.7, 6);
+  });
+});
+
+describe('等高线提取', () => {
+  it('T-3D10 平面不产生等高线', () => {
+    const values = new Float32Array([1, 1, 1, 1, 1, 1, 1, 1, 1]); // 3×3 顶点
+    expect(contourSegments(values, 2, 2, 2)).toHaveLength(0);
+  });
+
+  it('T-3D11 斜面在 level=0.5 处切出一条竖线', () => {
+    // 2×1 单元：三列顶点在 x 方向 0 → 0.5 → 1，两行相同
+    const values = new Float32Array([
+      0, 0.5, 1,
+      0, 0.5, 1,
+    ]);
+    const segs = contourSegments(values, 2, 1, 0.5);
+    expect(segs).toHaveLength(1);
+    const [x1, y1, x2, y2] = segs[0]!;
+    expect(Math.abs(x1 - 1)).toBeLessThan(1e-6);
+    expect(Math.abs(x2 - 1)).toBeLessThan(1e-6);
+    expect(Math.min(y1, y2)).toBeCloseTo(0, 6);
+    expect(Math.max(y1, y2)).toBeCloseTo(1, 6);
+  });
+
+  it('T-3D12 马鞍在 level=0.5 处有两段', () => {
+    // 1×1 单元，行优先四角：v00=0, v10=1, v01=1, v11=0（对角相等 = 鞍点）
+    const values = new Float32Array([0, 1, 1, 0]);
+    const segs = contourSegments(values, 1, 1, 0.5);
+    expect(segs).toHaveLength(2);
   });
 });

@@ -4,7 +4,7 @@ import { findExtrema, findIntersections, findRoots } from '../../math/analysis';
 import type { ComplexCompiled } from '../../math/complex';
 import type { Compiled, Scope } from '../../math/evaluate';
 import type { CurveMode } from '../../math/normalize';
-import { createCamera, faceNormal, normalizePoints, orbit, projectPoint, shade, type Vec3 } from './surface3d';
+import { contourSegments, createCamera, faceNormal, normalizePoints, orbit, projectPoint, shade, type Vec3 } from './surface3d';
 
 export interface CurveSpec {
   color: string;
@@ -45,6 +45,8 @@ export interface PlotOptions {
   showIntersections: boolean;
   /** 叠加反函数（关于 y=x 对称） */
   showInverse: boolean;
+  /** 三维曲面上叠加等高线 */
+  showContours: boolean;
 }
 
 /**
@@ -632,6 +634,8 @@ export class PlotView {
   }
 
   /** 三维曲面：z=f(x,y)，正交投影 + 画家算法 + 兰伯特着色。 */
+  private surfaceCache: { sig: string; z: Float32Array; N: number } | null = null;
+
   private drawSurface(curve: CurveSpec, opts: PlotOptions): void {
     const { ctx, width: W, height: H } = this.surface;
     const compiled = curve.compiled;
@@ -643,21 +647,44 @@ export class PlotView {
     const top = this.screenToWorld(0, 0).y;
     const bottom = this.screenToWorld(0, H).y;
 
-    const scope: Scope = { x: 0, y: 0, t: opts.t, a: curve.a, b: curve.b };
-    const stride = N + 1;
-    const grid: Vec3[] = new Array(stride * stride);
     const ax = this.xShift(curve);
     const by = this.yShift(curve);
-    let finite = 0;
+    const stride = N + 1;
 
+    // 采样缓存：只跟「表达式 + 视窗 + 参数」有关，旋转相机不需要重算
+    const sig = [
+      curve.source, ax, by, opts.t.toFixed(6),
+      left.toFixed(4), right.toFixed(4), top.toFixed(4), bottom.toFixed(4),
+      N,
+    ].join('|');
+
+    let zValues: Float32Array;
+    if (this.surfaceCache && this.surfaceCache.sig === sig) {
+      zValues = this.surfaceCache.z;
+    } else {
+      const scope: Scope = { x: 0, y: 0, t: opts.t, a: curve.a, b: curve.b };
+      zValues = new Float32Array(stride * stride);
+      for (let j = 0; j <= N; j++) {
+        const wy = bottom + ((top - bottom) * j) / N;
+        for (let i = 0; i <= N; i++) {
+          const wx = left + ((right - left) * i) / N;
+          scope.x = wx - ax;
+          scope.y = wy - by;
+          const z = compiled.fn(scope);
+          zValues[j * stride + i] = Number.isFinite(z) ? z : Number.NaN;
+        }
+      }
+      this.surfaceCache = { sig, z: zValues, N };
+    }
+
+    const grid: Vec3[] = new Array(stride * stride);
+    let finite = 0;
     for (let j = 0; j <= N; j++) {
       const wy = bottom + ((top - bottom) * j) / N;
       for (let i = 0; i <= N; i++) {
         const wx = left + ((right - left) * i) / N;
-        scope.x = wx - ax;
-        scope.y = wy - by;
-        const z = compiled.fn(scope);
-        grid[j * stride + i] = { x: wx, y: wy, z: Number.isFinite(z) ? z : Number.NaN };
+        const z = zValues[j * stride + i]!;
+        grid[j * stride + i] = { x: wx, y: wy, z };
         if (Number.isFinite(z)) finite++;
       }
     }
@@ -747,6 +774,7 @@ export class PlotView {
     }
 
     this.drawSurfaceBase();
+    if (opts.showContours) this.drawSurfaceContours(points, N);
     ctx.restore();
 
     ctx.save();
@@ -755,6 +783,50 @@ export class PlotView {
     ctx.textAlign = 'left';
     ctx.textBaseline = 'bottom';
     ctx.fillText('ALT+拖动旋转 · 滚轮缩放 · 拖动平移 · 双击复位', 12, H - 10);
+    ctx.restore();
+  }
+
+  /** 曲面上叠等高线：在归一化 z 上取 7 条水平集，投影后画线。 */
+  private drawSurfaceContours(points: Vec3[], N: number): void {
+    const { ctx, width: W, height: H } = this.surface;
+    const stride = N + 1;
+    const nz = new Float32Array(stride * stride);
+    let minZ = Infinity;
+    let maxZ = -Infinity;
+
+    for (let k = 0; k < points.length; k++) {
+      const z = points[k]!.z;
+      if (Number.isFinite(z)) {
+        nz[k] = z;
+        minZ = Math.min(minZ, z);
+        maxZ = Math.max(maxZ, z);
+      } else {
+        nz[k] = Number.NaN;
+      }
+    }
+    if (!Number.isFinite(minZ) || maxZ - minZ < 1e-9) return;
+
+    const view = { width: W, height: H, scale: Math.min(W, H) * 0.36 };
+    const levels = 7;
+
+    ctx.save();
+    ctx.lineWidth = 1.1;
+    ctx.strokeStyle = 'rgba(255,255,255,0.34)';
+
+    for (let k = 1; k <= levels; k++) {
+      const level = minZ + ((maxZ - minZ) * k) / (levels + 1);
+      const segments = contourSegments(nz, N, N, level);
+      if (segments.length === 0) continue;
+
+      ctx.beginPath();
+      for (const [x1, y1, x2, y2] of segments) {
+        const p1 = projectPoint({ x: -1 + (2 * x1) / N, y: -1 + (2 * y1) / N, z: level }, this.camera, view);
+        const p2 = projectPoint({ x: -1 + (2 * x2) / N, y: -1 + (2 * y2) / N, z: level }, this.camera, view);
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+      }
+      ctx.stroke();
+    }
     ctx.restore();
   }
 

@@ -138,3 +138,52 @@ export function orbit(cam: Camera, dxPx: number, dyPx: number): void {
   cam.yaw += dxPx * 0.01;
   cam.pitch = Math.max(0.08, Math.min(1.48, cam.pitch + dyPx * 0.01));
 }
+
+/**
+ * 从顶点网格里抽出一条水平集的线段（marching squares）。
+ *
+ * `values` 是 (cols+1)×(rows+1) 的顶点值，行优先；返回的线段端点用**格子坐标**
+ * （0..cols / 0..rows 的浮点索引），由调用方负责映射到世界坐标。
+ * 四条边都穿越时（鞍点）按 0-1、2-3 配对成两段。
+ */
+export function contourSegments(
+  values: Float32Array,
+  cols: number,
+  rows: number,
+  level: number,
+): Array<[number, number, number, number]> {
+  const stride = cols + 1;
+  const out: Array<[number, number, number, number]> = [];
+  if (cols < 1 || rows < 1) return out;
+
+  for (let j = 0; j < rows; j++) {
+    for (let i = 0; i < cols; i++) {
+      const v00 = values[j * stride + i]! - level;
+      const v10 = values[j * stride + i + 1]! - level;
+      const v11 = values[(j + 1) * stride + i + 1]! - level;
+      const v01 = values[(j + 1) * stride + i]! - level;
+      if (
+        !Number.isFinite(v00) || !Number.isFinite(v10) ||
+        !Number.isFinite(v11) || !Number.isFinite(v01)
+      ) {
+        continue;
+      }
+
+      const pts: number[] = [];
+      const cross = (a: number, b: number, x1: number, y1: number, x2: number, y2: number): void => {
+        if ((a >= 0) === (b >= 0)) return;
+        const t = a / (a - b);
+        pts.push(x1 + (x2 - x1) * t, y1 + (y2 - y1) * t);
+      };
+
+      cross(v00, v10, i, j, i + 1, j);
+      cross(v10, v11, i + 1, j, i + 1, j + 1);
+      cross(v11, v01, i + 1, j + 1, i, j + 1);
+      cross(v01, v00, i, j + 1, i, j);
+
+      if (pts.length >= 4) out.push([pts[0]!, pts[1]!, pts[2]!, pts[3]!]);
+      if (pts.length === 8) out.push([pts[4]!, pts[5]!, pts[6]!, pts[7]!]);
+    }
+  }
+  return out;
+}

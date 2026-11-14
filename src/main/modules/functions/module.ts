@@ -284,6 +284,7 @@ export class FunctionsModule implements VizModule {
   private restoredFromHash = false;
   private showIntersections = false;
   private showInverse = false;
+  private showContours = true;
   private paramIndex = 0;
   private paramSelect!: HTMLSelectElement;
   private aSlider!: ReturnType<typeof slider>;
@@ -361,6 +362,7 @@ export class FunctionsModule implements VizModule {
       showAnalysis: this.showAnalysis,
       showIntersections: this.showIntersections,
       showInverse: this.showInverse,
+      showContours: this.showContours,
     };
     this.plot.draw(this.specs(), opts);
     const visible = this.curves.filter((c) => c.visible && c.compiled).length;
@@ -565,6 +567,10 @@ export class FunctionsModule implements VizModule {
       }),
       toggle('反函数（关于 y=x 对称）', this.showInverse, (v) => {
         this.showInverse = v;
+        this.ctx.invalidate();
+      }),
+      toggle('三维等高线', this.showContours, (v) => {
+        this.showContours = v;
         this.ctx.invalidate();
       }),
     );
@@ -1061,6 +1067,7 @@ export class FunctionsModule implements VizModule {
       }
 
       this.hover = { x: sx, y: sy };
+      if (this.is3d()) return; // 3D 视图没有悬停读数，避免每次移动都重绘
       const hit = this.plot.pickCurve(this.specs(), sx, sy, this.ctx.transport.progress);
       canvas.style.cursor = hit >= 0 ? 'grab' : 'crosshair';
       this.ctx.invalidate();
