@@ -1,6 +1,7 @@
 import { Surface } from '../../core/surface';
 import { theme, font } from '../../core/theme';
 import { findExtrema, findIntersections, findRoots } from '../../math/analysis';
+import type { ComplexCompiled } from '../../math/complex';
 import type { Compiled, Scope } from '../../math/evaluate';
 import type { CurveMode } from '../../math/normalize';
 
@@ -9,6 +10,8 @@ export interface CurveSpec {
   compiled: Compiled | null;
   /** 参数方程的 y 分量 */
   compiledY: Compiled | null;
+  /** 复变函数（domain coloring）用的求值器 */
+  complex: ComplexCompiled | null;
   visible: boolean;
   mode: CurveMode;
   /** 水平偏移（表达式里没用到 a 时由渲染层施加） */
@@ -117,12 +120,18 @@ export class PlotView {
     const { surface } = this;
     surface.clear(theme.bg);
 
+    // 复变函数的域着色铺满整个平面，先画成背景，坐标轴再压在上面
+    for (const curve of curves) {
+      if (curve.visible && curve.mode === 'complex') this.drawComplex(curve, opts);
+    }
+
     const step = niceStep(78 / this.scale);
     if (opts.showGrid) this.drawGrid(step);
     this.drawAxes(step);
 
     for (const curve of curves) {
-      if (!curve.visible || !curve.compiled) continue;
+      if (!curve.visible || curve.mode === 'complex') continue;
+      if (!curve.compiled) continue;
       if (curve.mode === 'explicit') this.drawExplicit(curve, opts);
       else if (curve.mode === 'polar') this.drawPolar(curve, opts);
       else if (curve.mode === 'parametric') this.drawParametric(curve, opts);
@@ -610,6 +619,74 @@ export class PlotView {
     ctx.restore();
   }
 
+  /** 复变函数：f(z) 的 domain coloring（幅角→色相，模长→明度）。 */
+  private offscreen: HTMLCanvasElement | null = null;
+
+  private drawComplex(curve: CurveSpec, opts: PlotOptions): void {
+    const { ctx, width: W, height: H } = this.surface;
+    const fn = curve.complex?.fn;
+    if (!fn) return;
+
+    const res = 5; // 每 5 CSS 像素采一个点，再放大
+    const w = Math.max(2, Math.ceil(W / res));
+    const h = Math.max(2, Math.ceil(H / res));
+
+    if (!this.offscreen) this.offscreen = document.createElement('canvas');
+    const off = this.offscreen;
+    if (off.width !== w || off.height !== h) {
+      off.width = w;
+      off.height = h;
+    }
+    const octx = off.getContext('2d');
+    if (!octx) return;
+
+    const img = octx.createImageData(w, h);
+    const data = img.data;
+    const left = this.screenToWorld(0, 0).x;
+    const top = this.screenToWorld(0, 0).y;
+    const stepX = W / w / this.scale;
+    const stepY = H / h / this.scale;
+    const ax = this.xShift(curve);
+    const by = this.yShift(curve);
+
+    for (let j = 0; j < h; j++) {
+      const im = top - (j + 0.5) * stepY - by;
+      for (let i = 0; i < w; i++) {
+        const re = left + (i + 0.5) * stepX - ax;
+        const k = (j * w + i) * 4;
+        const v = fn(re, im);
+
+        if (!Number.isFinite(v.re) || !Number.isFinite(v.im)) {
+          data[k] = 12;
+          data[k + 1] = 14;
+          data[k + 2] = 20;
+          data[k + 3] = 255;
+          continue;
+        }
+
+        const mag = Math.hypot(v.re, v.im);
+        const arg = Math.atan2(v.im, v.re);
+        const hue = ((arg / (Math.PI * 2)) + 1) % 1;
+        const shade = 1 - 1 / (1 + Math.log1p(mag));
+        // 相位环：|f| 每翻一倍亮一点，便于看出零点与极点
+        const ring = 0.5 + 0.5 * Math.cos(Math.PI * 2 * Math.log2(mag + 1e-12));
+        const val = clampLocal(0.24 + 0.6 * shade + 0.1 * ring, 0.05, 1);
+        const rgb = hsvToRgb(hue, 0.8, val);
+        data[k] = rgb[0];
+        data[k + 1] = rgb[1];
+        data[k + 2] = rgb[2];
+        data[k + 3] = 255;
+      }
+    }
+
+    octx.putImageData(img, 0, 0);
+    ctx.save();
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(off, 0, 0, W, H);
+    ctx.restore();
+    void opts;
+  }
+
   /** F(x,y)=0：屏幕网格上的 marching squares，取符号变化的边交点。 */
   private drawImplicit(curve: CurveSpec, opts: PlotOptions): void {
     const { ctx, width: W, height: H } = this.surface;
@@ -686,7 +763,7 @@ export class PlotView {
     const scope: Scope = { x: 0, y: 0, th: 0, t, a: 0, b: 0 };
 
     curves.forEach((curve, index) => {
-      if (!curve.visible || !curve.compiled || curve.mode === 'implicit' || curve.mode === 'bivariate') return;
+      if (!curve.visible || !curve.compiled || curve.mode === 'implicit' || curve.mode === 'bivariate' || curve.mode === 'complex') return;
 
       if (curve.mode === 'explicit') {
         scope.a = curve.a;
@@ -1027,6 +1104,29 @@ export class PlotView {
 
 function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
+}
+
+const clampLocal = clamp;
+
+/** HSV(0..1) → RGB(0..255) */
+function hsvToRgb(h: number, s: number, v: number): [number, number, number] {
+  const i = Math.floor(h * 6);
+  const f = h * 6 - i;
+  const p = v * (1 - s);
+  const q = v * (1 - f * s);
+  const t = v * (1 - (1 - f) * s);
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  switch (i % 6) {
+    case 0: r = v; g = t; b = p; break;
+    case 1: r = q; g = v; b = p; break;
+    case 2: r = p; g = v; b = t; break;
+    case 3: r = p; g = q; b = v; break;
+    case 4: r = t; g = p; b = v; break;
+    default: r = v; g = p; b = q; break;
+  }
+  return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
 }
 
 function niceStep(target: number): number {

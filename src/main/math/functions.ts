@@ -72,6 +72,13 @@ export const FUNCTIONS: Record<string, BuiltinFunction> = {
   asinh: unary(Math.asinh, '反双曲正弦'),
   acosh: unary(Math.acosh, '反双曲余弦'),
   atanh: unary(Math.atanh, '反双曲正切'),
+  // 复数模式常用的几个名字：实数下给出退化语义，保证表达式在两种模式都能解析
+  arg: unary((x) => (x >= 0 ? 0 : Math.PI), '幅角（实数取 0 或 π）'),
+  conj: unary((x) => x, '共轭（实数即自身）'),
+  re: unary((x) => x, '实部'),
+  im: unary(() => 0, '虚部'),
+  real: unary((x) => x, '实部'),
+  imag: unary(() => 0, '虚部'),
 };
 
 export const CONSTANTS: Record<string, number> = {

@@ -3,9 +3,11 @@ import { Surface } from '../../core/surface';
 import { theme } from '../../core/theme';
 import { decodeShare, encodeShare } from '../../core/share';
 import { compileSource, validate } from '../../math/evaluate';
+import { compileComplex } from '../../math/complex';
 import { FUNCTION_HINT } from '../../math/functions';
 import { normalizeFormulaBlock, type CurveMode } from '../../math/normalize';
 import type { Compiled } from '../../math/evaluate';
+import type { ComplexCompiled } from '../../math/complex';
 import type { ModuleContext, VizModule } from '../../ui/module';
 import { button, createStats, field, section, slider, toggle } from '../../ui/controls';
 import { PlotView, type CurveSpec, type PlotOptions } from './plot';
@@ -19,6 +21,7 @@ interface CurveEntry {
   visible: boolean;
   compiled: Compiled | null;
   compiledY: Compiled | null;
+  complex: ComplexCompiled | null;
   /** 拖动产生的水平/垂直偏移；表达式里没用到时由渲染层施加 */
   a: number;
   b: number;
@@ -189,6 +192,17 @@ const PRESET_GROUPS: PresetGroup[] = [
     ],
   },
   {
+    group: '复变函数（域着色）',
+    items: [
+      { label: 'f(z) = z²', source: 'z^2', mode: 'complex' },
+      { label: 'f(z) = 1/z', source: '1/z', mode: 'complex' },
+      { label: 'f(z) = sin z', source: 'sin(z)', mode: 'complex' },
+      { label: 'f(z) = e^z', source: 'exp(z)', mode: 'complex' },
+      { label: 'f(z) = z³ - 1', source: 'z^3 - 1', mode: 'complex' },
+      { label: 'f(z) = (z²-1)/(z²+1)', source: '(z^2 - 1)/(z^2 + 1)', mode: 'complex' },
+    ],
+  },
+  {
     group: '参数方程',
     items: [
       { label: '李萨如', source: '3cos(2u)', sourceY: '3sin(3u)', mode: 'parametric' },
@@ -204,6 +218,7 @@ const MODE_LABELS: Record<CurveMode, string> = {
   polar: 'r(θ)',
   parametric: 'x(u), y(u)',
   bivariate: 'z = f(x,y)',
+  complex: 'f(z) 复变',
 };
 
 /** 各模式下允许出现的变量（其余标黄提示「按变量处理」） */
@@ -213,6 +228,7 @@ const MODE_VARS: Record<CurveMode, string[]> = {
   polar: ['th', 't', 'a', 'b'],
   parametric: ['u', 't', 'a', 'b'],
   bivariate: ['x', 'y', 't', 'a', 'b'],
+  complex: ['z', 't'],
 };
 
 const MAX_CURVES = 5;
@@ -355,6 +371,7 @@ export class FunctionsModule implements VizModule {
       visible: true,
       compiled: null,
       compiledY: null,
+      complex: null,
       a,
       b,
       usesA: false,
@@ -366,6 +383,25 @@ export class FunctionsModule implements VizModule {
 
   /** 重新编译并把「是否用了 a/b」同步给渲染层 */
   private refresh(entry: CurveEntry): { ok: boolean; message: string } {
+    if (entry.mode === 'complex') {
+      entry.compiled = null;
+      entry.compiledY = null;
+      if (entry.source.trim() === '') {
+        entry.complex = null;
+        return { ok: false, message: '表达式为空' };
+      }
+      try {
+        entry.complex = compileComplex(entry.source);
+        entry.usesA = false;
+        entry.usesB = false;
+        return { ok: true, message: '' };
+      } catch (err) {
+        entry.complex = null;
+        return { ok: false, message: (err as Error).message };
+      }
+    }
+
+    entry.complex = null;
     const result = validate(entry.source);
     if (!result.ok || entry.source.trim() === '') {
       entry.compiled = null;
@@ -407,6 +443,7 @@ export class FunctionsModule implements VizModule {
       color: c.color,
       compiled: c.visible ? c.compiled : null,
       compiledY: c.visible ? c.compiledY : null,
+      complex: c.visible ? c.complex : null,
       source: c.source,
       visible: c.visible,
       mode: c.mode,
@@ -696,7 +733,7 @@ export class FunctionsModule implements VizModule {
       'aria-label': `曲线 ${index + 1} 的类型`,
     });
     modeLabel.htmlFor = `curve-mode-${index}`;
-    for (const mode of ['explicit', 'implicit', 'polar', 'parametric', 'bivariate'] as CurveMode[]) {
+    for (const mode of ['explicit', 'implicit', 'polar', 'parametric', 'bivariate', 'complex'] as CurveMode[]) {
       select.append(el('option', { value: mode, text: MODE_LABELS[mode] }));
     }
     select.value = curve.mode;
