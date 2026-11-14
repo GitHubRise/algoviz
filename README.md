@@ -19,7 +19,7 @@ pnpm install
 pnpm dev        # 开发服务器
 pnpm build      # 类型检查 + 生产构建（dist/）
 pnpm preview    # 预览构建产物
-pnpm test       # 113 条判定表用例
+pnpm test       # 116 条判定表用例
 pnpm spike      # 探路脚本：解析器 + 帧规模实测
 ```
 
