@@ -390,3 +390,35 @@ export function runSort(kind: SortKind, input: readonly number[]): SortTrace {
     writes: rec.writes,
   };
 }
+
+export interface SortBenchRow {
+  kind: SortKind;
+  label: string;
+  comparisons: number;
+  writes: number;
+  frames: number;
+  /** 结果是否与升序一致 */
+  ok: boolean;
+}
+
+/**
+ * 同一组输入把所有排序跑一遍，返回可直接排成表格的指标。
+ * 计数排序会先把值取整，所以非整数输入在这里会判为「不一致」。
+ */
+export function benchmarkSorts(input: readonly number[]): SortBenchRow[] {
+  const expected = [...input].sort((a, b) => a - b);
+  return SORT_KINDS.map((kind) => {
+    const trace = runSort(kind, input);
+    const ok =
+      trace.sorted.length === expected.length &&
+      trace.sorted.every((value, index) => value === expected[index]);
+    return {
+      kind,
+      label: trace.label,
+      comparisons: trace.comparisons,
+      writes: trace.writes,
+      frames: trace.frames.length,
+      ok,
+    };
+  });
+}

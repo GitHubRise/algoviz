@@ -316,3 +316,25 @@ export function solve(kind: AlgoKind, spec: GridSpec, opts: SolveOptions = {}): 
 
 export { manhattan, neighbors };
 export const WALL_CODE = WALL;
+
+export interface PathBenchRow {
+  kind: AlgoKind;
+  label: string;
+  found: boolean;
+  cost: number;
+  visited: number;
+}
+
+/** 同一张图把所有寻路算法跑一遍，返回可直接排成表格的指标。 */
+export function benchmarkPathfinding(spec: GridSpec, opts: SolveOptions = {}): PathBenchRow[] {
+  return ALGO_KINDS.map((kind) => {
+    const solution = solve(kind, spec, opts);
+    return {
+      kind,
+      label: ALGO_LABELS[kind],
+      found: solution.found,
+      cost: solution.cost,
+      visited: solution.visitedCount,
+    };
+  });
+}

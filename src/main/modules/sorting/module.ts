@@ -2,8 +2,9 @@ import { el } from '../../core/dom';
 import { Surface } from '../../core/surface';
 import { theme, font } from '../../core/theme';
 import type { ModuleContext, VizModule } from '../../ui/module';
-import { button, createStats, field, section, slider } from '../../ui/controls';
+import { button, createStats, createTable, field, section, slider, type TableHandle } from '../../ui/controls';
 import {
+  benchmarkSorts,
   ROLE,
   runSort,
   SORT_KINDS,
@@ -40,6 +41,7 @@ export class SortingModule implements VizModule {
   private values: number[] = [];
   private trace!: SortTrace;
   private stats!: ReturnType<typeof createStats>;
+  private cmpTable!: TableHandle;
   private noteEl!: HTMLElement;
   private sizeSlider!: ReturnType<typeof slider>;
 
@@ -232,6 +234,16 @@ export class SortingModule implements VizModule {
       section('统计', stats.el, el('div', { class: 'field' }, el('label', { text: '当前步骤' }), note)),
     );
 
+    const cmp = createTable(['算法', '比较', '写入', '帧数']);
+    this.cmpTable = cmp;
+    panel.append(
+      section(
+        '算法对比',
+        cmp.el,
+        el('p', { class: 'note-text', text: '同一组数据下 8 种算法的实测指标，当前算法高亮。' }),
+      ),
+    );
+
     panel.append(
       section(
         '快捷键',
@@ -259,8 +271,20 @@ export class SortingModule implements VizModule {
     });
     this.ctx.transport.pause();
     this.ctx.transport.seek(0);
+    this.refreshComparison();
     this.render(0);
     this.ctx.invalidate();
+  }
+
+  /** 跑一遍全部算法，刷新对比表（当前算法高亮） */
+  private refreshComparison(): void {
+    const rows = benchmarkSorts(this.values).map((row) => [
+      row.ok ? row.label : `${row.label} ⚠`,
+      String(row.comparisons),
+      String(row.writes),
+      String(row.frames),
+    ]);
+    this.cmpTable.setRows(rows, SORT_KINDS.indexOf(this.kind));
   }
 }
 

@@ -4,7 +4,7 @@
 
 | 文件 | 内容 |
 |---|---|
-| `判定表.md` | 116 条用例：输入、期望、反例（T-S / T-P / T-E / T-N / T-A / T-H / T-C / T-3D） |
+| `判定表.md` | 120 条用例：输入、期望、反例（T-S / T-P / T-E / T-N / T-A / T-H / T-C / T-3D） |
 | `sorting.test.ts` | 排序断言，用例名引用判定表编号 |
 | `pathfinding.test.ts` | 寻路断言，同上 |
 | `parser.test.ts` | 表达式回归用例，同上 |

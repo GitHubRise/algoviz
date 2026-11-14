@@ -2,8 +2,16 @@ import { el } from '../../core/dom';
 import { Surface } from '../../core/surface';
 import { theme, font } from '../../core/theme';
 import type { ModuleContext, VizModule } from '../../ui/module';
-import { button, createStats, field, section, toggle } from '../../ui/controls';
-import { ALGO_KINDS, ALGO_LABELS, ALGO_NOTES, solve, type AlgoKind, type PathSolution } from './algorithms';
+import { button, createStats, createTable, field, section, toggle, type TableHandle } from '../../ui/controls';
+import {
+  ALGO_KINDS,
+  ALGO_LABELS,
+  ALGO_NOTES,
+  benchmarkPathfinding,
+  solve,
+  type AlgoKind,
+  type PathSolution,
+} from './algorithms';
 import { cellOf, createGrid, generateMaze, type GridState } from './grid';
 
 const COLS = 39;
@@ -29,6 +37,7 @@ export class PathfindingModule implements VizModule {
   private diagonal = false;
   private solution!: PathSolution;
   private stats!: ReturnType<typeof createStats>;
+  private cmpTable!: TableHandle;
   private statusEl!: HTMLElement;
   private algoNote!: HTMLElement;
 
@@ -323,8 +332,16 @@ export class PathfindingModule implements VizModule {
     const status = el('p', { class: 'note-text', text: '—' });
     this.statusEl = status;
 
+    const cmp = createTable(['算法', '状态', '代价', '访问']);
+    this.cmpTable = cmp;
+
     panel.append(
       section('结果', stats.el, el('div', { class: 'field' }, el('label', { text: '说明' }), status)),
+      section(
+        '算法对比',
+        cmp.el,
+        el('p', { class: 'note-text', text: '同一张图上 5 种算法的实测结果，当前算法高亮。' }),
+      ),
       section(
         '快捷键',
         el('p', { class: 'note-text', text: '空格 播放/暂停 · ← → 单步 · 进度条可拖拽' }),
@@ -367,8 +384,28 @@ export class PathfindingModule implements VizModule {
     });
     this.ctx.transport.pause();
     this.ctx.transport.seek(0);
+    this.refreshComparison();
     this.render(0);
     this.ctx.invalidate();
+  }
+
+  /** 同一张图跑一遍五种算法，刷新对比表（当前算法高亮） */
+  private refreshComparison(): void {
+    const spec = {
+      cols: this.grid.cols,
+      rows: this.grid.rows,
+      walls: this.grid.walls,
+      start: this.grid.start,
+      goal: this.grid.goal,
+      weights: this.weights,
+    };
+    const rows = benchmarkPathfinding(spec, { diagonal: this.diagonal }).map((row) => [
+      row.label,
+      row.found ? '可达' : '不可达',
+      row.found ? formatCost(row.cost) : '—',
+      String(row.visited),
+    ]);
+    this.cmpTable.setRows(rows, ALGO_KINDS.indexOf(this.algo));
   }
 
   private pickCell(ev: PointerEvent, canvas: HTMLCanvasElement): number | null {

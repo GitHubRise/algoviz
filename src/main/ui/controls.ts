@@ -96,6 +96,42 @@ export function slider(
   };
 }
 
+export interface TableHandle {
+  el: HTMLElement;
+  /** 重写表体；highlight 为要高亮的行下标 */
+  setRows(rows: string[][], highlight?: number): void;
+}
+
+/** 紧凑对比表：首列左对齐，其余右对齐 */
+export function createTable(headers: string[]): TableHandle {
+  const tbody = el('tbody');
+  const table = el(
+    'table',
+    { class: 'cmp-table' },
+    el(
+      'thead',
+      {},
+      el('tr', {}, ...headers.map((h, i) => el('th', { text: h, class: i === 0 ? 'left' : 'right' }))),
+    ),
+    tbody,
+  );
+
+  return {
+    el: table,
+    setRows(rows: string[][], highlight?: number): void {
+      tbody.replaceChildren(
+        ...rows.map((row, index) => {
+          const tr = el('tr', { class: index === highlight ? 'active' : '' });
+          row.forEach((cell, i) => {
+            tr.append(el('td', { text: cell, class: i === 0 ? 'left' : 'right' }));
+          });
+          return tr;
+        }),
+      );
+    },
+  };
+}
+
 export interface StatsHandle {
   el: HTMLElement;
   set(values: string[]): void;
