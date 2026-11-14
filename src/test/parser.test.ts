@@ -69,4 +69,20 @@ describe('表达式解析与求值', () => {
   it('T-E16 未知变量求值为 NaN', () => {
     expect(Number.isNaN(value('x'))).toBe(true);
   });
+
+  it('T-E24 阶乘（整数）', () => {
+    expect(value('fact(5)')).toBe(120);
+  });
+
+  it('T-E25 阶乘（半整数走伽马）', () => {
+    expect(value('fact(0.5)')).toBeCloseTo(Math.sqrt(Math.PI) / 2, 6);
+  });
+
+  it('T-E26 gamma(5) = 24', () => {
+    expect(value('gamma(5)')).toBeCloseTo(24, 6);
+  });
+
+  it('T-E27 负半整数仍有限', () => {
+    expect(Number.isFinite(value('fact(-0.5)'))).toBe(true);
+  });
 });

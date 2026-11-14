@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { runSort, type SortKind } from '../main/modules/sorting/algorithms';
 
-const KINDS: SortKind[] = ['bubble', 'insertion', 'selection', 'merge', 'quick'];
+const KINDS: SortKind[] = ['bubble', 'insertion', 'selection', 'shell', 'merge', 'quick', 'heap', 'counting'];
 
 function sortedCopy(values: number[]): number[] {
   return [...values].sort((a, b) => a - b);
@@ -90,9 +90,27 @@ describe('排序算法', () => {
     expect(() => runSort('__nope__' as SortKind, [1])).toThrow(/未知排序算法/);
   });
 
-  it('T-S14 排序过程真的发生了比较', () => {
-    for (const kind of KINDS) {
+  it('T-S14 排序过程真的发生了比较（计数排序除外）', () => {
+    for (const kind of KINDS.filter((k) => k !== 'counting')) {
       expect(runSort(kind, [3, 1, 2]).comparisons, kind).toBeGreaterThan(0);
     }
+  });
+
+  it('T-S15 希尔排序能处理逆序', () => {
+    expect(runSort('shell', [9, 7, 5, 3, 1]).sorted).toEqual([1, 3, 5, 7, 9]);
+  });
+
+  it('T-S16 堆排序能处理随机序列', () => {
+    expect(runSort('heap', [5, 9, 1, 7, 3]).sorted).toEqual([1, 3, 5, 7, 9]);
+  });
+
+  it('T-S17 计数排序能处理重复值', () => {
+    expect(runSort('counting', [4, 2, 4, 1, 2, 4]).sorted).toEqual([1, 2, 2, 4, 4, 4]);
+  });
+
+  it('T-S18 计数排序不是比较排序', () => {
+    const trace = runSort('counting', [4, 2, 4, 1]);
+    expect(trace.comparisons).toBe(0);
+    expect(trace.writes).toBe(4);
   });
 });

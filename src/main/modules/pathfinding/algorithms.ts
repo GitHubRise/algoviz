@@ -1,26 +1,28 @@
 /**
- * 网格寻路：BFS / DFS / Dijkstra / A*。
+ * 网格寻路：BFS / DFS / Dijkstra / A* / 贪心最佳优先。
  *
  * 与排序模块同一套思路：solve() 只负责算出结果与访问顺序，
  * 不碰画布；渲染层拿到 visitedOrder 自己决定怎么画。
  */
 
-export type AlgoKind = 'bfs' | 'dfs' | 'dijkstra' | 'astar';
+export type AlgoKind = 'bfs' | 'dfs' | 'dijkstra' | 'astar' | 'greedy';
 
-export const ALGO_KINDS: readonly AlgoKind[] = ['bfs', 'dfs', 'dijkstra', 'astar'];
+export const ALGO_KINDS: readonly AlgoKind[] = ['bfs', 'dfs', 'dijkstra', 'astar', 'greedy'];
 
 export const ALGO_LABELS: Record<AlgoKind, string> = {
   bfs: '广度优先 BFS',
   dfs: '深度优先 DFS',
   dijkstra: 'Dijkstra',
   astar: 'A*',
+  greedy: '贪心最佳优先',
 };
 
 export const ALGO_NOTES: Record<AlgoKind, string> = {
   bfs: '无权图上的最短路，队列逐层扩展',
   dfs: '一条路走到黑，不保证最短',
-  dijkstra: '按累计代价从小到大出队',
-  astar: 'Dijkstra + 曼哈顿启发，方向感更强',
+  dijkstra: '按累计代价从小到大出队，支持地形权重',
+  astar: 'Dijkstra + 距离启发，方向感更强',
+  greedy: '只看「离终点还有多远」，快但常绕进死路',
 };
 
 export interface GridSpec {
@@ -29,6 +31,13 @@ export interface GridSpec {
   walls: ReadonlySet<number>;
   start: number;
   goal: number;
+  /** 进入该格子的额外代价（默认 1） */
+  weights?: ReadonlyMap<number, number>;
+}
+
+export interface SolveOptions {
+  /** 允许走 8 邻域（对角线） */
+  diagonal?: boolean;
 }
 
 export interface PathSolution {
@@ -37,7 +46,7 @@ export interface PathSolution {
   path: number[];
   /** 被确定的节点数（含起点终点） */
   visitedCount: number;
-  /** 路径步数，即 path.length - 1 */
+  /** 路径代价：4 邻域下等于步数；有权重/对角线时是累计代价 */
   cost: number;
   /** 节点被确定的先后顺序，供渲染层逐帧播放 */
   visitedOrder: number[];
@@ -61,19 +70,48 @@ function validate(spec: GridSpec): void {
   }
 }
 
-function neighbors(index: number, cols: number, rows: number): number[] {
+function neighbors(index: number, cols: number, rows: number, diagonal = false): number[] {
   const x = index % cols;
   const y = Math.floor(index / cols);
   const out: number[] = [];
   if (y > 0) out.push(index - cols);
+  if (diagonal && y > 0 && x < cols - 1) out.push(index - cols + 1);
   if (x < cols - 1) out.push(index + 1);
+  if (diagonal && y < rows - 1 && x < cols - 1) out.push(index + cols + 1);
   if (y < rows - 1) out.push(index + cols);
+  if (diagonal && y < rows - 1 && x > 0) out.push(index + cols - 1);
   if (x > 0) out.push(index - 1);
+  if (diagonal && y > 0 && x > 0) out.push(index - cols - 1);
   return out;
 }
 
 function manhattan(a: number, b: number, cols: number): number {
   return Math.abs((a % cols) - (b % cols)) + Math.abs(Math.floor(a / cols) - Math.floor(b / cols));
+}
+
+/** 八邻域下的 octile 距离：对角线走 √2，直线走 1。 */
+function octile(a: number, b: number, cols: number): number {
+  const dx = Math.abs((a % cols) - (b % cols));
+  const dy = Math.abs(Math.floor(a / cols) - Math.floor(b / cols));
+  const min = Math.min(dx, dy);
+  const max = Math.max(dx, dy);
+  return (max - min) + min * Math.SQRT2;
+}
+
+/** 进入某格的代价：地形权重 × 步长（对角为 √2）。 */
+function moveCost(spec: GridSpec, from: number, to: number, diagonal: boolean): number {
+  const weight = spec.weights?.get(to) ?? 1;
+  const step = diagonal && from % spec.cols !== to % spec.cols && Math.floor(from / spec.cols) !== Math.floor(to / spec.cols)
+    ? Math.SQRT2
+    : 1;
+  return weight * step;
+}
+
+/** 沿路径累加代价（起点不计）。 */
+function pathCost(spec: GridSpec, path: number[], diagonal: boolean): number {
+  let total = 0;
+  for (let i = 1; i < path.length; i++) total += moveCost(spec, path[i - 1]!, path[i]!, diagonal);
+  return total;
 }
 
 class MinHeap {
@@ -132,20 +170,26 @@ function reconstruct(parent: Int32Array, start: number, goal: number): number[] 
   return path;
 }
 
-function build(spec: GridSpec, parent: Int32Array, visitedOrder: number[], goalReached: boolean): PathSolution {
+function build(
+  spec: GridSpec,
+  parent: Int32Array,
+  visitedOrder: number[],
+  goalReached: boolean,
+  diagonal: boolean,
+): PathSolution {
   const path = goalReached ? reconstruct(parent, spec.start, spec.goal) : [];
   const found = goalReached && path.length > 0;
   return {
     found,
     path,
     visitedCount: visitedOrder.length,
-    cost: Math.max(0, path.length - 1),
+    cost: found ? pathCost(spec, path, diagonal) : 0,
     visitedOrder,
     parent,
   };
 }
 
-function bfs(spec: GridSpec): PathSolution {
+function bfs(spec: GridSpec, diagonal: boolean): PathSolution {
   const total = spec.cols * spec.rows;
   const parent = new Int32Array(total).fill(-1);
   const seen = new Uint8Array(total);
@@ -156,18 +200,18 @@ function bfs(spec: GridSpec): PathSolution {
   for (let head = 0; head < queue.length; head++) {
     const cur = queue[head]!;
     order.push(cur);
-    if (cur === spec.goal) return build(spec, parent, order, true);
-    for (const nb of neighbors(cur, spec.cols, spec.rows)) {
+    if (cur === spec.goal) return build(spec, parent, order, true, diagonal);
+    for (const nb of neighbors(cur, spec.cols, spec.rows, diagonal)) {
       if (seen[nb] || spec.walls.has(nb)) continue;
       seen[nb] = 1;
       parent[nb] = cur;
       queue.push(nb);
     }
   }
-  return build(spec, parent, order, false);
+  return build(spec, parent, order, false, diagonal);
 }
 
-function dfs(spec: GridSpec): PathSolution {
+function dfs(spec: GridSpec, diagonal: boolean): PathSolution {
   const total = spec.cols * spec.rows;
   const parent = new Int32Array(total).fill(-1);
   const seen = new Uint8Array(total);
@@ -179,8 +223,8 @@ function dfs(spec: GridSpec): PathSolution {
     if (seen[cur]) continue;
     seen[cur] = 1;
     order.push(cur);
-    if (cur === spec.goal) return build(spec, parent, order, true);
-    const nbs = neighbors(cur, spec.cols, spec.rows);
+    if (cur === spec.goal) return build(spec, parent, order, true, diagonal);
+    const nbs = neighbors(cur, spec.cols, spec.rows, diagonal);
     // 逆序入栈，使其按 上右下左 的视觉顺序扩展
     for (let i = nbs.length - 1; i >= 0; i--) {
       const nb = nbs[i]!;
@@ -189,10 +233,19 @@ function dfs(spec: GridSpec): PathSolution {
       stack.push(nb);
     }
   }
-  return build(spec, parent, order, false);
+  return build(spec, parent, order, false, diagonal);
 }
 
-function bestFirst(spec: GridSpec, heuristic: (a: number) => number): PathSolution {
+/**
+ * Dijkstra / A* / 贪心共用的一套最佳优先搜索。
+ * `greedy` 为真时只看启发值（不再松弛 dist），代价在最后按路径累加。
+ */
+function bestFirst(
+  spec: GridSpec,
+  heuristic: (a: number) => number,
+  diagonal: boolean,
+  greedy = false,
+): PathSolution {
   const total = spec.cols * spec.rows;
   const parent = new Int32Array(total).fill(-1);
   const dist = new Float64Array(total).fill(Number.POSITIVE_INFINITY);
@@ -210,11 +263,20 @@ function bestFirst(spec: GridSpec, heuristic: (a: number) => number): PathSoluti
     settled[cur] = 1;
     order.push(cur);
 
-    if (cur === spec.goal) return build(spec, parent, order, true);
+    if (cur === spec.goal) return build(spec, parent, order, true, diagonal);
 
-    for (const nb of neighbors(cur, spec.cols, spec.rows)) {
+    for (const nb of neighbors(cur, spec.cols, spec.rows, diagonal)) {
       if (settled[nb] || spec.walls.has(nb)) continue;
-      const next = dist[cur]! + 1;
+
+      if (greedy) {
+        if (parent[nb] === -1) {
+          parent[nb] = cur;
+          heap.push(nb, heuristic(nb));
+        }
+        continue;
+      }
+
+      const next = dist[cur]! + moveCost(spec, cur, nb, diagonal);
       if (next < dist[nb]!) {
         dist[nb] = next;
         parent[nb] = cur;
@@ -222,24 +284,31 @@ function bestFirst(spec: GridSpec, heuristic: (a: number) => number): PathSoluti
       }
     }
   }
-  return build(spec, parent, order, false);
+  return build(spec, parent, order, false, diagonal);
 }
 
 /**
  * 求一条从 start 到 goal 的路径。
  * @throws 网格尺寸非法 / 索引越界 / 起点或终点在墙内
  */
-export function solve(kind: AlgoKind, spec: GridSpec): PathSolution {
+export function solve(kind: AlgoKind, spec: GridSpec, opts: SolveOptions = {}): PathSolution {
   validate(spec);
+  const diagonal = opts.diagonal ?? false;
+  const h = (n: number): number => (diagonal
+    ? octile(n, spec.goal, spec.cols)
+    : manhattan(n, spec.goal, spec.cols));
+
   switch (kind) {
     case 'bfs':
-      return bfs(spec);
+      return bfs(spec, diagonal);
     case 'dfs':
-      return dfs(spec);
+      return dfs(spec, diagonal);
     case 'dijkstra':
-      return bestFirst(spec, () => 0);
+      return bestFirst(spec, () => 0, diagonal);
     case 'astar':
-      return bestFirst(spec, (n) => manhattan(n, spec.goal, spec.cols));
+      return bestFirst(spec, h, diagonal);
+    case 'greedy':
+      return bestFirst(spec, h, diagonal, true);
     default:
       throw new Error(`未知寻路算法: ${String(kind)}`);
   }

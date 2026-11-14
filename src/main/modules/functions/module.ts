@@ -33,15 +33,169 @@ interface Preset {
   mode: CurveMode;
 }
 
-const PRESETS: Preset[] = [
-  { label: '正弦', source: 'sin(x)', mode: 'explicit' },
-  { label: '高斯', source: 'gauss(x)', mode: 'explicit' },
-  { label: '双曲', source: '1/x', mode: 'explicit' },
-  { label: '衰减波', source: 'exp(-0.15x)sin(3x)', mode: 'explicit' },
-  { label: '分段', source: 'if(x < 0, x^2, sqrt(x))', mode: 'explicit' },
-  { label: '圆（隐）', source: 'x^2 + y^2 - 9', mode: 'implicit' },
-  { label: '玫瑰线（极）', source: '3cos(5th)', mode: 'polar' },
-  { label: '李萨如（参）', source: '3cos(2u)', sourceY: '3sin(3u)', mode: 'parametric' },
+interface PresetGroup {
+  group: string;
+  items: Preset[];
+}
+
+/** 按中学数学的函数分类组织的预设库 */
+const PRESET_GROUPS: PresetGroup[] = [
+  {
+    group: '常数函数',
+    items: [
+      { label: 'y = 3', source: '3', mode: 'explicit' },
+      { label: 'y = π', source: 'pi', mode: 'explicit' },
+      { label: 'y = -2', source: '-2', mode: 'explicit' },
+    ],
+  },
+  {
+    group: '一次函数',
+    items: [
+      { label: 'y = 2x + 1', source: '2x + 1', mode: 'explicit' },
+      { label: 'y = -0.5x + 2', source: '-0.5x + 2', mode: 'explicit' },
+    ],
+  },
+  {
+    group: '二次函数',
+    items: [
+      { label: 'y = x²', source: 'x^2', mode: 'explicit' },
+      { label: 'y = 0.15x² - 2', source: '0.15x^2 - 2', mode: 'explicit' },
+      { label: 'y = -x² + 4', source: '-x^2 + 4', mode: 'explicit' },
+    ],
+  },
+  {
+    group: '三次函数',
+    items: [
+      { label: 'y = x³ - 3x', source: 'x^3 - 3x', mode: 'explicit' },
+      { label: 'y = 0.2x³ - x', source: '0.2x^3 - x', mode: 'explicit' },
+    ],
+  },
+  {
+    group: '反比例函数',
+    items: [
+      { label: 'y = 1/x', source: '1/x', mode: 'explicit' },
+      { label: 'y = 3/x', source: '3/x', mode: 'explicit' },
+    ],
+  },
+  {
+    group: '幂函数',
+    items: [
+      { label: 'y = √x', source: 'sqrt(x)', mode: 'explicit' },
+      { label: 'y = x^(1/3)', source: 'x^(1/3)', mode: 'explicit' },
+      { label: 'y = |x|', source: 'abs(x)', mode: 'explicit' },
+    ],
+  },
+  {
+    group: '指数函数',
+    items: [
+      { label: 'y = 2^x', source: '2^x', mode: 'explicit' },
+      { label: 'y = e^x', source: 'exp(x)', mode: 'explicit' },
+      { label: 'y = e^(-x)', source: 'exp(-x)', mode: 'explicit' },
+    ],
+  },
+  {
+    group: '对数函数',
+    items: [
+      { label: 'y = ln x', source: 'ln(x)', mode: 'explicit' },
+      { label: 'y = log x', source: 'log(x)', mode: 'explicit' },
+      { label: 'y = log₂ x', source: 'log2(x)', mode: 'explicit' },
+    ],
+  },
+  {
+    group: '幂指函数',
+    items: [
+      { label: 'y = x^x', source: 'x^x', mode: 'explicit' },
+      { label: 'y = x^(1/x)', source: 'x^(1/x)', mode: 'explicit' },
+    ],
+  },
+  {
+    group: '对勾函数',
+    items: [
+      { label: 'y = x + 1/x', source: 'x + 1/x', mode: 'explicit' },
+      { label: 'y = x + 4/x', source: 'x + 4/x', mode: 'explicit' },
+    ],
+  },
+  {
+    group: '三角函数',
+    items: [
+      { label: 'y = sin x', source: 'sin(x)', mode: 'explicit' },
+      { label: 'y = cos x', source: 'cos(x)', mode: 'explicit' },
+      { label: 'y = tan x', source: 'tan(x)', mode: 'explicit' },
+      { label: 'y = sin 2x', source: 'sin(2x)', mode: 'explicit' },
+    ],
+  },
+  {
+    group: '双曲函数',
+    items: [
+      { label: 'y = sinh x', source: 'sinh(x)', mode: 'explicit' },
+      { label: 'y = cosh x', source: 'cosh(x)', mode: 'explicit' },
+      { label: 'y = tanh x', source: 'tanh(x)', mode: 'explicit' },
+    ],
+  },
+  {
+    group: '反函数',
+    items: [
+      { label: 'y = arcsin x', source: 'asin(x)', mode: 'explicit' },
+      { label: 'y = arccos x', source: 'acos(x)', mode: 'explicit' },
+      { label: 'y = arctan x', source: 'atan(x)', mode: 'explicit' },
+      { label: 'y = arsinh x', source: 'asinh(x)', mode: 'explicit' },
+    ],
+  },
+  {
+    group: '阶乘与伽马',
+    items: [
+      { label: 'y = x!', source: 'fact(x)', mode: 'explicit' },
+      { label: 'y = Γ(x)', source: 'gamma(x)', mode: 'explicit' },
+    ],
+  },
+  {
+    group: '复合函数',
+    items: [
+      { label: 'y = sin(x²)', source: 'sin(x^2)', mode: 'explicit' },
+      { label: 'y = e^(-x²)', source: 'exp(-x^2)', mode: 'explicit' },
+      { label: 'y = sin(cos x)', source: 'sin(cos(x))', mode: 'explicit' },
+      { label: 'y = sin x · cos x', source: 'sin(x)cos(x)', mode: 'explicit' },
+    ],
+  },
+  {
+    group: '分段函数',
+    items: [
+      { label: '分段示例', source: 'if(x < 0, x^2, sqrt(x))', mode: 'explicit' },
+      { label: '符号与绝对值', source: 'if(x < 0, -x, x)', mode: 'explicit' },
+    ],
+  },
+  {
+    group: '二元函数（等高线）',
+    items: [
+      { label: 'z = x² - y²', source: 'x^2 - y^2', mode: 'bivariate' },
+      { label: 'z = sin x cos y', source: 'sin(x)cos(y)', mode: 'bivariate' },
+      { label: 'z = x² + y²', source: 'x^2 + y^2', mode: 'bivariate' },
+    ],
+  },
+  {
+    group: '隐函数',
+    items: [
+      { label: '圆 x² + y² = 9', source: 'x^2 + y^2 - 9', mode: 'implicit' },
+      { label: '椭圆 x²/4 + y²/9 = 1', source: 'x^2/4 + y^2/9 - 1', mode: 'implicit' },
+      { label: '心形', source: '(x^2 + y^2 - 1)^3 - x^2y^3', mode: 'implicit' },
+    ],
+  },
+  {
+    group: '极坐标',
+    items: [
+      { label: '玫瑰线', source: '3cos(5th)', mode: 'polar' },
+      { label: '心形线', source: '2 - 2sin(th)', mode: 'polar' },
+      { label: '阿基米德螺线', source: 'th/3', mode: 'polar' },
+    ],
+  },
+  {
+    group: '参数方程',
+    items: [
+      { label: '李萨如', source: '3cos(2u)', sourceY: '3sin(3u)', mode: 'parametric' },
+      { label: '摆线', source: 'u - sin(u)', sourceY: '1 - cos(u)', mode: 'parametric' },
+      { label: '星形线', source: '3cos(u)^3', sourceY: '3sin(u)^3', mode: 'parametric' },
+    ],
+  },
 ];
 
 const MODE_LABELS: Record<CurveMode, string> = {
@@ -49,6 +203,7 @@ const MODE_LABELS: Record<CurveMode, string> = {
   implicit: 'F(x,y) = 0',
   polar: 'r(θ)',
   parametric: 'x(u), y(u)',
+  bivariate: 'z = f(x,y)',
 };
 
 /** 各模式下允许出现的变量（其余标黄提示「按变量处理」） */
@@ -57,6 +212,7 @@ const MODE_VARS: Record<CurveMode, string[]> = {
   implicit: ['x', 'y', 't', 'a', 'b'],
   polar: ['th', 't', 'a', 'b'],
   parametric: ['u', 't', 'a', 'b'],
+  bivariate: ['x', 'y', 't', 'a', 'b'],
 };
 
 const MAX_CURVES = 5;
@@ -97,6 +253,12 @@ export class FunctionsModule implements VizModule {
   private tangentSlider!: ReturnType<typeof slider>;
   private fittedScale = false;
   private restoredFromHash = false;
+  private showIntersections = false;
+  private showInverse = false;
+  private paramIndex = 0;
+  private paramSelect!: HTMLSelectElement;
+  private aSlider!: ReturnType<typeof slider>;
+  private bSlider!: ReturnType<typeof slider>;
 
   constructor(ctx: ModuleContext, initial: Array<{
     source: string;
@@ -166,10 +328,20 @@ export class FunctionsModule implements VizModule {
       active: this.active,
       showDerivative: this.showDerivative,
       showAnalysis: this.showAnalysis,
+      showIntersections: this.showIntersections,
+      showInverse: this.showInverse,
     };
     this.plot.draw(this.specs(), opts);
     const visible = this.curves.filter((c) => c.visible && c.compiled).length;
     this.stats.set([String(visible), `${Math.round(this.plot.scale)} px/单位`]);
+  }
+
+  /** 拖动或切换曲线后，把滑杆同步到当前曲线 */
+  private syncParamSliders(): void {
+    const curve = this.curves[this.paramIndex];
+    if (!curve) return;
+    this.aSlider.set(curve.a);
+    this.bSlider.set(curve.b);
   }
 
   // ---------- 数据 ----------
@@ -276,19 +448,39 @@ export class FunctionsModule implements VizModule {
     );
     panel.append(curveSection);
 
+    const presetSelect = el('select', { id: 'preset-select', 'aria-label': '函数库' });
+    for (const group of PRESET_GROUPS) {
+      const og = el('optgroup', { label: group.group });
+      for (const item of group.items) {
+        og.append(el('option', { value: item.label, text: item.label }));
+      }
+      presetSelect.append(og);
+    }
+    const presetLabel = el('label', { class: 'sr-only', text: '函数库' });
+    presetLabel.htmlFor = 'preset-select';
+
+    const flatPresets = PRESET_GROUPS.flatMap((g) => g.items);
+
     panel.append(
       section(
-        '示例',
+        '函数库',
+        el('div', { class: 'curve-row' }, presetLabel, presetSelect),
         el(
           'div',
           { class: 'btn-row' },
-          ...PRESETS.map((preset) =>
-            button(preset.label, () => {
-              const target = this.curves.length > 1 ? 1 : 0;
-              this.applyFormula(target, preset.source, preset.mode, preset.sourceY ?? '');
-            }),
-          ),
+          button('填入曲线', () => {
+            const preset = flatPresets.find((p) => p.label === presetSelect.value);
+            if (!preset) return;
+            const target = this.paramIndex >= 0 && this.paramIndex < this.curves.length
+              ? this.paramIndex
+              : (this.curves.length > 1 ? 1 : 0);
+            this.applyFormula(target, preset.source, preset.mode, preset.sourceY ?? '');
+          }, { primary: true }),
         ),
+        el('p', {
+          class: 'note-text',
+          text: '按中学数学分类收录：常数/一次/二次/三次/反比例/幂/指数/对数/幂指/对勾/三角/双曲/反函数/阶乘/复合/分段，以及二元、隐函数、极坐标、参数方程。',
+        }),
       ),
     );
 
@@ -313,6 +505,14 @@ export class FunctionsModule implements VizModule {
       }),
       toggle('标注零点与极值', this.showAnalysis, (v) => {
         this.showAnalysis = v;
+        this.ctx.invalidate();
+      }),
+      toggle('标注交点', this.showIntersections, (v) => {
+        this.showIntersections = v;
+        this.ctx.invalidate();
+      }),
+      toggle('反函数（关于 y=x 对称）', this.showInverse, (v) => {
+        this.showInverse = v;
         this.ctx.invalidate();
       }),
     );
@@ -346,6 +546,62 @@ export class FunctionsModule implements VizModule {
       el('div', { class: 'field-row' }, field('积分下限 a', aInput), field('积分上限 b', bInput)),
     );
     panel.append(options);
+
+    // 参数滑杆：选一条曲线，直接调它的 a / b
+    const paramSelect = el('select', { id: 'param-curve', 'aria-label': '参数作用的曲线' });
+    for (let i = 0; i < this.curves.length; i++) {
+      paramSelect.append(el('option', { value: String(i), text: `曲线 ${i + 1}` }));
+    }
+    paramSelect.value = String(this.paramIndex);
+    paramSelect.addEventListener('change', () => {
+      this.paramIndex = Number(paramSelect.value);
+      this.syncParamSliders();
+    });
+
+    const aSlider = slider('水平偏移 a', {
+      min: -10,
+      max: 10,
+      step: 0.05,
+      value: this.curves[this.paramIndex]?.a ?? 0,
+      format: (v) => v.toFixed(2),
+      onInput: (v) => {
+        const curve = this.curves[this.paramIndex];
+        if (!curve) return;
+        curve.a = v;
+        this.ctx.invalidate();
+      },
+    });
+
+    const bSlider = slider('垂直偏移 b', {
+      min: -10,
+      max: 10,
+      step: 0.05,
+      value: this.curves[this.paramIndex]?.b ?? 0,
+      format: (v) => v.toFixed(2),
+      onInput: (v) => {
+        const curve = this.curves[this.paramIndex];
+        if (!curve) return;
+        curve.b = v;
+        this.ctx.invalidate();
+      },
+    });
+
+    this.paramSelect = paramSelect;
+    this.aSlider = aSlider;
+    this.bSlider = bSlider;
+
+    panel.append(
+      section(
+        '参数 a / b',
+        el('div', { class: 'field-row' }, field('作用曲线', paramSelect)),
+        aSlider.el,
+        bSlider.el,
+        el('p', {
+          class: 'note-text',
+          text: '拖动曲线时滑杆会跟着走；表达式里写了 a 或 b 时，渲染层不再额外平移。',
+        }),
+      ),
+    );
 
     panel.append(
       section(
@@ -440,7 +696,7 @@ export class FunctionsModule implements VizModule {
       'aria-label': `曲线 ${index + 1} 的类型`,
     });
     modeLabel.htmlFor = `curve-mode-${index}`;
-    for (const mode of ['explicit', 'implicit', 'polar', 'parametric'] as CurveMode[]) {
+    for (const mode of ['explicit', 'implicit', 'polar', 'parametric', 'bivariate'] as CurveMode[]) {
       select.append(el('option', { value: mode, text: MODE_LABELS[mode] }));
     }
     select.value = curve.mode;
@@ -470,6 +726,9 @@ export class FunctionsModule implements VizModule {
     entry.visible = true;
     this.curves.push(entry);
     this.appendRow(entry, index);
+    if (this.paramSelect) {
+      this.paramSelect.append(el('option', { value: String(index), text: `曲线 ${index + 1}` }));
+    }
     this.ctx.invalidate();
   }
 
@@ -681,6 +940,9 @@ export class FunctionsModule implements VizModule {
         const curve = this.curves[index]!;
         this.drag = { index, a0: curve.a, b0: curve.b, sx, sy };
         this.active = { index, a: curve.a, b: curve.b };
+        this.paramIndex = index;
+        if (this.paramSelect) this.paramSelect.value = String(index);
+        this.syncParamSliders();
         canvas.style.cursor = 'grabbing';
       } else {
         this.panning = { sx, sy };
@@ -703,6 +965,7 @@ export class FunctionsModule implements VizModule {
           curve.b = this.drag.b0 + dyWorld;
           if (ev.shiftKey) curve.a = this.drag.a0;
           this.active = { index: this.drag.index, a: curve.a, b: curve.b };
+          this.syncParamSliders();
         }
         this.ctx.invalidate();
         return;

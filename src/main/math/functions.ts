@@ -1,5 +1,7 @@
 /** 内置函数与常量表。 */
 
+import { factorial, gamma } from './special';
+
 export interface BuiltinFunction {
   fn: (...args: number[]) => number;
   minArgs: number;
@@ -64,6 +66,12 @@ export const FUNCTIONS: Record<string, BuiltinFunction> = {
   logistic: unary((x) => 1 / (1 + Math.exp(-x)), '逻辑斯蒂'),
   // 分段：if(条件, 真值, 假值)。编译期会走惰性求值，见 evaluate.ts
   if: { fn: (c, a, b) => (c ? a : b), minArgs: 3, maxArgs: 3, summary: '分段：if(条件, 真值, 假值)' },
+  gamma: unary(gamma, '伽马函数 Γ(x)'),
+  fact: unary(factorial, '阶乘 n!（非整数走 Γ）'),
+  // 反三角与双曲反函数成对补齐，便于「反函数」类图像
+  asinh: unary(Math.asinh, '反双曲正弦'),
+  acosh: unary(Math.acosh, '反双曲余弦'),
+  atanh: unary(Math.atanh, '反双曲正切'),
 };
 
 export const CONSTANTS: Record<string, number> = {

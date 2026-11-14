@@ -5,16 +5,36 @@
  * 播放器按进度取帧渲染。这样算法与渲染彻底解耦，也便于单测。
  */
 
-export type SortKind = 'bubble' | 'insertion' | 'selection' | 'merge' | 'quick';
+export type SortKind =
+  | 'bubble'
+  | 'insertion'
+  | 'selection'
+  | 'shell'
+  | 'merge'
+  | 'quick'
+  | 'heap'
+  | 'counting';
 
-export const SORT_KINDS: readonly SortKind[] = ['bubble', 'insertion', 'selection', 'merge', 'quick'];
+export const SORT_KINDS: readonly SortKind[] = [
+  'bubble',
+  'insertion',
+  'selection',
+  'shell',
+  'merge',
+  'quick',
+  'heap',
+  'counting',
+];
 
 export const SORT_LABELS: Record<SortKind, string> = {
   bubble: '冒泡排序',
   insertion: '插入排序',
   selection: '选择排序',
+  shell: '希尔排序',
   merge: '归并排序',
   quick: '快速排序',
+  heap: '堆排序',
+  counting: '计数排序',
 };
 
 /** 角色码：渲染层按此映射颜色，取值必须落在 0..5。 */
@@ -253,6 +273,83 @@ function quick(rec: Recorder): void {
   for (let i = 0; i < rec.values.length; i++) rec.markSorted(i, `a[${i}] 已就位`);
 }
 
+/** 希尔排序：按增量做插入排序，增量逐次减半。 */
+function shell(rec: Recorder): void {
+  const n = rec.values.length;
+  for (let gap = Math.floor(n / 2); gap > 0; gap = Math.floor(gap / 2)) {
+    for (let i = gap; i < n; i++) {
+      let j = i;
+      while (j >= gap) {
+        rec.compare(j - gap, j);
+        if (rec.values[j - gap]! > rec.values[j]!) {
+          rec.swap(j - gap, j);
+          j -= gap;
+        } else {
+          break;
+        }
+      }
+    }
+  }
+  for (let i = 0; i < n; i++) rec.markSorted(i, `a[${i}] 已就位`);
+}
+
+/** 堆排序：先建大顶堆，再逐个把堆顶换到末尾。 */
+function heap(rec: Recorder): void {
+  const n = rec.values.length;
+
+  const sift = (start: number, end: number): void => {
+    let root = start;
+    for (;;) {
+      const left = root * 2 + 1;
+      if (left > end) return;
+      let child = left;
+      if (left + 1 <= end) {
+        rec.compare(left, left + 1);
+        if (rec.values[left + 1]! > rec.values[left]!) child = left + 1;
+      }
+      rec.compare(root, child);
+      if (rec.values[root]! < rec.values[child]!) {
+        rec.swap(root, child);
+        root = child;
+      } else {
+        return;
+      }
+    }
+  };
+
+  for (let start = Math.floor((n - 2) / 2); start >= 0; start--) sift(start, n - 1);
+  for (let end = n - 1; end > 0; end--) {
+    rec.swap(0, end);
+    rec.markSorted(end, `a[${end}] 已就位`);
+    sift(0, end - 1);
+  }
+  if (n > 0) rec.markSorted(0);
+}
+
+/** 计数排序：按值域计数后回写，适合小整数与重复值。 */
+function counting(rec: Recorder): void {
+  const original = [...rec.values];
+  const n = original.length;
+  if (n === 0) return;
+
+  const counts = new Map<number, number>();
+  for (const value of original) {
+    const key = Math.round(value);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+
+  const keys = [...counts.keys()].sort((a, b) => a - b);
+  let write = 0;
+  for (const key of keys) {
+    const times = counts.get(key)!;
+    for (let t = 0; t < times; t++) {
+      rec.write(write, key);
+      write++;
+    }
+  }
+  for (let i = 0; i < n; i++) rec.markSorted(i, `a[${i}] 已就位`);
+}
+
 /**
  * 录制一次完整排序过程。
  * @throws 未知算法时抛出 `未知排序算法: <kind>`
@@ -262,8 +359,11 @@ export function runSort(kind: SortKind, input: readonly number[]): SortTrace {
     bubble,
     insertion,
     selection,
+    shell,
     merge,
     quick,
+    heap,
+    counting,
   }[kind];
 
   if (!runner) throw new Error(`未知排序算法: ${String(kind)}`);

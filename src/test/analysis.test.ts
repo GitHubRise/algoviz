@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { findExtrema, findRoots } from '../main/math/analysis';
+import { findExtrema, findIntersections, findRoots } from '../main/math/analysis';
 import { decodeShare, encodeShare } from '../main/core/share';
 
 const sin = (x: number): number => Math.sin(x);
@@ -59,6 +59,31 @@ describe('零点与极值', () => {
     expect(marks).toHaveLength(1);
     expect(marks[0]!.kind).toBe('min');
     expect(Math.abs(marks[0]!.x)).toBeLessThan(1e-2);
+  });
+
+  it('T-A09 两条曲线交于三点', () => {
+    const hits = findIntersections(sin, () => 0.5, -4, 4);
+    expect(hits).toHaveLength(3);
+    const xs = hits.map((h) => h.x).sort((a, b) => a - b);
+    expect(Math.abs(xs[0]! - (-7 * Math.PI / 6))).toBeLessThan(1e-3);
+    expect(Math.abs(xs[1]! - Math.asin(0.5))).toBeLessThan(1e-3);
+    expect(Math.abs(xs[2]! - (Math.PI - Math.asin(0.5)))).toBeLessThan(1e-3);
+  });
+
+  it('T-A10 抛物线与直线交于 -1 和 3', () => {
+    const hits = findIntersections((x) => x * x, (x) => 2 * x + 3, -5, 5);
+    expect(hits).toHaveLength(2);
+    const xs = hits.map((h) => h.x).sort((a, b) => a - b);
+    expect(Math.abs(xs[0]! + 1)).toBeLessThan(1e-3);
+    expect(Math.abs(xs[1]! - 3)).toBeLessThan(1e-3);
+  });
+
+  it('T-A11 不相交时为空', () => {
+    expect(findIntersections((x) => x * x + 1, () => 0, -5, 5)).toHaveLength(0);
+  });
+
+  it('T-A12 相切且不在采样格上时检不出来', () => {
+    expect(findIntersections((x) => (x - 1.2345) ** 2, () => 0, -5, 5)).toHaveLength(0);
   });
 });
 

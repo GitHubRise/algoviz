@@ -1,14 +1,14 @@
 /**
- * 曲线分析：零点与极值。
+ * 曲线分析：零点、极值与交点。
  *
  * 纯函数，不依赖画布——渲染层拿结果去画标记，测试直接调这里。
- * 采样 + 二分（零点）+ 抛物插值（极值），精度足够画图，不追求符号求解。
+ * 采样 + 二分（零点/交点）+ 抛物插值（极值），精度足够画图，不追求符号求解。
  */
 
 export interface PointMark {
   x: number;
   y: number;
-  kind: 'root' | 'max' | 'min';
+  kind: 'root' | 'max' | 'min' | 'cross';
 }
 
 const DEFAULTS = { samples: 400, bisect: 60 };
@@ -122,4 +122,20 @@ export function findExtrema(
     marks.push({ x, y: Number.isFinite(refined) ? refined : y, kind: isMax ? 'max' : 'min' });
   }
   return marks;
+}
+
+/**
+ * 两条显式曲线的交点：对 f1 - f2 求零点，y 取 f1 的值。
+ * 限制：相切（偶重根）处没有符号变化，检不出来。
+ */
+export function findIntersections(
+  f1: (x: number) => number,
+  f2: (x: number) => number,
+  xmin: number,
+  xmax: number,
+  samples: number = DEFAULTS.samples,
+): PointMark[] {
+  return findRoots((x) => f1(x) - f2(x), xmin, xmax, samples)
+    .map((mark) => ({ x: mark.x, y: f1(mark.x), kind: 'cross' as const }))
+    .filter((mark) => Number.isFinite(mark.y));
 }

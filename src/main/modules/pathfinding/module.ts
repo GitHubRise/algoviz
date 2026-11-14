@@ -2,14 +2,14 @@ import { el } from '../../core/dom';
 import { Surface } from '../../core/surface';
 import { theme, font } from '../../core/theme';
 import type { ModuleContext, VizModule } from '../../ui/module';
-import { button, createStats, field, section } from '../../ui/controls';
+import { button, createStats, field, section, toggle } from '../../ui/controls';
 import { ALGO_KINDS, ALGO_LABELS, ALGO_NOTES, solve, type AlgoKind, type PathSolution } from './algorithms';
 import { cellOf, createGrid, generateMaze, type GridState } from './grid';
 
 const COLS = 39;
 const ROWS = 23;
 
-type Brush = 'wall' | 'erase';
+type Brush = 'wall' | 'erase' | 'weight';
 
 export class PathfindingModule implements VizModule {
   readonly id = 'pathfinding';
@@ -24,12 +24,15 @@ export class PathfindingModule implements VizModule {
   private grid: GridState = createGrid(COLS, ROWS);
   private algo: AlgoKind = 'astar';
   private brush: Brush = 'wall';
+  /** 高代价地形：格子索引 → 进入该格的代价（默认 1） */
+  private weights = new Map<number, number>();
+  private diagonal = false;
   private solution!: PathSolution;
   private stats!: ReturnType<typeof createStats>;
   private statusEl!: HTMLElement;
   private algoNote!: HTMLElement;
 
-  private dragging: 'start' | 'goal' | 'paint' | 'erase' | null = null;
+  private dragging: 'start' | 'goal' | 'paint' | 'erase' | 'weight' | null = null;
   private cellSize = 20;
   private offsetX = 0;
   private offsetY = 0;
@@ -80,12 +83,12 @@ export class PathfindingModule implements VizModule {
     const visited = Math.min(this.solution.visitedOrder.length, cursor);
     this.stats.set([
       String(visited),
-      String(this.solution.found ? this.solution.cost : 0),
+      this.solution.found ? formatCost(this.solution.cost) : '—',
       this.solution.found ? (cursor >= total ? '已到达' : '搜索中') : '不可达',
       ALGO_LABELS[this.algo],
     ]);
     this.statusEl.textContent = this.solution.found
-      ? `路径长度 ${this.solution.cost} 步 · 访问 ${this.solution.visitedOrder.length} 个节点`
+      ? `路径代价 ${formatCost(this.solution.cost)} · 访问 ${this.solution.visitedOrder.length} 个节点`
       : '终点不可达：先清掉一部分墙再试';
   }
 
@@ -105,8 +108,18 @@ export class PathfindingModule implements VizModule {
         ctx.fillStyle = theme.wall;
         ctx.fillRect(px + 0.5, py + 0.5, cs - 1, cs - 1);
       } else {
-        ctx.fillStyle = theme.panelAlt;
+        const weight = this.weights.get(i);
+        ctx.fillStyle = weight ? 'rgba(255, 209, 102, 0.22)' : theme.panelAlt;
         ctx.fillRect(px, py, cs, cs);
+        if (weight && cs >= 10) {
+          // 高代价地形：画一道斜纹提示
+          ctx.strokeStyle = 'rgba(255, 209, 102, 0.45)';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(px + 2, py + cs - 2);
+          ctx.lineTo(px + cs - 2, py + 2);
+          ctx.stroke();
+        }
       }
     }
 
@@ -219,6 +232,7 @@ export class PathfindingModule implements VizModule {
     ctx.textBaseline = 'alphabetic';
     const items: Array<[string, string]> = [
       [theme.wall, '墙'],
+      ['rgba(255, 209, 102, 0.45)', '高代价'],
       [theme.frontier, '正在搜索'],
       [theme.path, '路径'],
     ];
@@ -239,7 +253,7 @@ export class PathfindingModule implements VizModule {
       el('h2', { class: 'panel-title', text: '网格寻路' }),
       el('p', {
         class: 'panel-sub',
-        text: '在网格上拖动绘制墙体，比较四种搜索策略的扩展方式与最终路径。',
+        text: '画墙、涂高代价地形、开关对角线，比较五种搜索策略的扩展方式与最终路径。',
       }),
     );
 
@@ -260,6 +274,7 @@ export class PathfindingModule implements VizModule {
     const brushSelect = el('select');
     brushSelect.append(
       el('option', { value: 'wall', text: '画墙' }),
+      el('option', { value: 'weight', text: '高代价（5）' }),
       el('option', { value: 'erase', text: '擦除' }),
     );
     brushSelect.value = this.brush;
@@ -267,11 +282,17 @@ export class PathfindingModule implements VizModule {
       this.brush = brushSelect.value as Brush;
     });
 
+    const diagonalToggle = toggle('允许对角线（8 邻域）', this.diagonal, (v) => {
+      this.diagonal = v;
+      this.rebuild();
+    });
+
     panel.append(
       section(
         '搜索',
         field('算法', algoSelect, ALGO_NOTES[this.algo]),
-        field('画笔', brushSelect, '拖动 S / G 可以移动起终点'),
+        field('画笔', brushSelect, '拖动 S / G 可以移动起终点；擦除同时清掉地形'),
+        diagonalToggle,
       ),
       section(
         '地图',
@@ -280,21 +301,24 @@ export class PathfindingModule implements VizModule {
           { class: 'btn-row' },
           button('随机迷宫', () => {
             this.grid = generateMaze(COLS, ROWS);
+            this.weights.clear();
             this.rebuild();
           }, { primary: true }),
           button('清空墙', () => {
             this.grid.walls.clear();
+            this.weights.clear();
             this.rebuild();
           }),
           button('重置', () => {
             this.grid = createGrid(COLS, ROWS);
+            this.weights.clear();
             this.rebuild();
           }),
         ),
       ),
     );
 
-    const stats = createStats(['已访问', '路径步数', '状态', '算法']);
+    const stats = createStats(['已访问', '路径代价', '状态', '算法']);
     this.stats = stats;
     const status = el('p', { class: 'note-text', text: '—' });
     this.statusEl = status;
@@ -312,13 +336,18 @@ export class PathfindingModule implements VizModule {
 
   private rebuild(): void {
     try {
-      this.solution = solve(this.algo, {
-        cols: this.grid.cols,
-        rows: this.grid.rows,
-        walls: this.grid.walls,
-        start: this.grid.start,
-        goal: this.grid.goal,
-      });
+      this.solution = solve(
+        this.algo,
+        {
+          cols: this.grid.cols,
+          rows: this.grid.rows,
+          walls: this.grid.walls,
+          start: this.grid.start,
+          goal: this.grid.goal,
+          weights: this.weights,
+        },
+        { diagonal: this.diagonal },
+      );
     } catch {
       this.solution = {
         found: false,
@@ -352,13 +381,23 @@ export class PathfindingModule implements VizModule {
 
   private applyBrush(cell: number): boolean {
     if (cell === this.grid.start || cell === this.grid.goal) return false;
+
     if (this.dragging === 'paint') {
       if (this.grid.walls.has(cell)) return false;
       this.grid.walls.add(cell);
+      this.weights.delete(cell);
       return true;
     }
     if (this.dragging === 'erase') {
-      return this.grid.walls.delete(cell);
+      const removedWall = this.grid.walls.delete(cell);
+      const removedWeight = this.weights.delete(cell);
+      return removedWall || removedWeight;
+    }
+    if (this.dragging === 'weight') {
+      if (this.grid.walls.has(cell)) return false;
+      if (this.weights.get(cell) === 5) return false;
+      this.weights.set(cell, 5);
+      return true;
     }
     return false;
   }
@@ -377,6 +416,8 @@ export class PathfindingModule implements VizModule {
         this.dragging = 'start';
       } else if (cell === this.grid.goal) {
         this.dragging = 'goal';
+      } else if (this.brush === 'weight') {
+        this.dragging = 'weight';
       } else if (this.brush === 'erase' ? this.grid.walls.has(cell) : !this.grid.walls.has(cell)) {
         this.dragging = this.brush === 'erase' ? 'erase' : 'paint';
       } else {
@@ -417,4 +458,9 @@ export class PathfindingModule implements VizModule {
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v));
+}
+
+/** 代价保留一位小数：整数步数不显示小数点，有 √2/权重时才显示 */
+function formatCost(cost: number): string {
+  return Number.isInteger(cost) ? String(cost) : cost.toFixed(1);
 }

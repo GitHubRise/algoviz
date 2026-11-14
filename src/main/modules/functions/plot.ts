@@ -1,6 +1,6 @@
 import { Surface } from '../../core/surface';
 import { theme, font } from '../../core/theme';
-import { findExtrema, findRoots } from '../../math/analysis';
+import { findExtrema, findIntersections, findRoots } from '../../math/analysis';
 import type { Compiled, Scope } from '../../math/evaluate';
 import type { CurveMode } from '../../math/normalize';
 
@@ -37,6 +37,10 @@ export interface PlotOptions {
   showDerivative: boolean;
   /** 标注零点与极值 */
   showAnalysis: boolean;
+  /** 标注两条曲线的交点 */
+  showIntersections: boolean;
+  /** 叠加反函数（关于 y=x 对称） */
+  showInverse: boolean;
 }
 
 /**
@@ -122,11 +126,14 @@ export class PlotView {
       if (curve.mode === 'explicit') this.drawExplicit(curve, opts);
       else if (curve.mode === 'polar') this.drawPolar(curve, opts);
       else if (curve.mode === 'parametric') this.drawParametric(curve, opts);
+      else if (curve.mode === 'bivariate') this.drawBivariate(curve, opts);
       else this.drawImplicit(curve, opts);
     }
 
+    if (opts.showInverse) this.drawInverse(curves, opts);
     if (opts.showDerivative) this.drawDerivatives(curves, opts);
     if (opts.showAnalysis) this.drawAnalysis(curves, opts);
+    if (opts.showIntersections) this.drawIntersections(curves, opts);
     if (opts.showIntegral) this.drawIntegral(curves, opts);
     if (opts.showTangent) this.drawTangent(curves, opts);
     if (opts.hover) this.drawHover(curves, opts);
@@ -416,6 +423,193 @@ export class PlotView {
     ctx.restore();
   }
 
+  /** 二元函数 z=f(x,y)：等高线（marching squares 逐个水平集）。 */
+  private drawBivariate(curve: CurveSpec, opts: PlotOptions): void {
+    const { ctx, width: W, height: H } = this.surface;
+    const compiled = curve.compiled!;
+    const step = 8;
+    const cols = Math.ceil(W / step) + 1;
+    const rows = Math.ceil(H / step) + 1;
+    const vals = new Float32Array(cols * rows);
+    const scope: Scope = { x: 0, y: 0, t: opts.t, a: curve.a, b: curve.b };
+    const left = this.screenToWorld(0, 0).x;
+    const top = this.screenToWorld(0, 0).y;
+    const worldPerPx = 1 / this.scale;
+
+    let min = Number.POSITIVE_INFINITY;
+    let max = Number.NEGATIVE_INFINITY;
+    for (let j = 0; j < rows; j++) {
+      const wy = top - j * step * worldPerPx;
+      for (let i = 0; i < cols; i++) {
+        scope.x = left + i * step * worldPerPx;
+        scope.y = wy;
+        const v = compiled.fn(scope);
+        vals[j * cols + i] = v;
+        if (Number.isFinite(v)) {
+          min = Math.min(min, v);
+          max = Math.max(max, v);
+        }
+      }
+    }
+    if (!Number.isFinite(min) || !Number.isFinite(max) || max - min < 1e-9) return;
+
+    const levels = 9;
+    ctx.save();
+    ctx.lineWidth = 1.4;
+    for (let k = 1; k <= levels; k++) {
+      const level = min + ((max - min) * k) / (levels + 1);
+      ctx.strokeStyle = hexToRgba(curve.color, 0.35 + 0.5 * (k / levels));
+      ctx.beginPath();
+      for (let j = 0; j < rows - 1; j++) {
+        for (let i = 0; i < cols - 1; i++) {
+          const v00 = vals[j * cols + i]!;
+          const v10 = vals[j * cols + i + 1]!;
+          const v11 = vals[(j + 1) * cols + i + 1]!;
+          const v01 = vals[(j + 1) * cols + i]!;
+          if (!Number.isFinite(v00) || !Number.isFinite(v10) || !Number.isFinite(v11) || !Number.isFinite(v01)) {
+            continue;
+          }
+          const a = v00 - level;
+          const b = v10 - level;
+          const c = v11 - level;
+          const d = v01 - level;
+
+          const pts: number[] = [];
+          const cross = (va: number, vb: number, x1: number, y1: number, x2: number, y2: number): void => {
+            if ((va >= 0) === (vb >= 0)) return;
+            const tt = va / (va - vb);
+            pts.push(x1 + (x2 - x1) * tt, y1 + (y2 - y1) * tt);
+          };
+          cross(a, b, i * step, j * step, (i + 1) * step, j * step);
+          cross(b, c, (i + 1) * step, j * step, (i + 1) * step, (j + 1) * step);
+          cross(c, d, (i + 1) * step, (j + 1) * step, i * step, (j + 1) * step);
+          cross(d, a, i * step, (j + 1) * step, i * step, j * step);
+
+          if (pts.length >= 4) {
+            ctx.moveTo(pts[0]!, pts[1]!);
+            ctx.lineTo(pts[2]!, pts[3]!);
+          }
+          if (pts.length === 8) {
+            ctx.moveTo(pts[4]!, pts[5]!);
+            ctx.lineTo(pts[6]!, pts[7]!);
+          }
+        }
+      }
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  /** 反函数：把 (x, f(x)) 反射成 (f(x), x)，虚线绘制。 */
+  private drawInverse(curves: CurveSpec[], opts: PlotOptions): void {
+    const { ctx, width: W, height: H } = this.surface;
+    const left = this.screenToWorld(0, 0).x;
+    const worldPerPx = 1 / this.scale;
+    const scope: Scope = { x: 0, t: opts.t, a: 0, b: 0 };
+
+    ctx.save();
+    ctx.lineWidth = 1.3;
+    ctx.setLineDash([3, 5]);
+
+    for (const curve of curves) {
+      if (!curve.visible || !curve.compiled || curve.mode !== 'explicit') continue;
+      const compiled = curve.compiled;
+      const xShift = this.xShift(curve);
+      const yShift = this.yShift(curve);
+
+      ctx.strokeStyle = hexToRgba(curve.color, 0.45);
+      ctx.beginPath();
+      let drawing = false;
+      let prevX = Number.NaN;
+      let prevY = Number.NaN;
+
+      for (let px = 0; px <= W; px += 1.5) {
+        const x = left + px * worldPerPx;
+        scope.a = curve.a;
+        scope.b = curve.b;
+        scope.x = x - xShift;
+        const y = compiled.fn(scope) + yShift;
+        if (!Number.isFinite(y)) {
+          drawing = false;
+          prevX = Number.NaN;
+          continue;
+        }
+        // 反射后的点：横坐标是原函数值
+        const p = this.worldToScreen(y, x);
+        if (p.x < -W * 2 || p.x > W * 3 || p.y < -H * 2 || p.y > H * 3) {
+          drawing = false;
+          prevX = Number.NaN;
+          continue;
+        }
+        if (drawing && Number.isFinite(prevX)) {
+          const jump = Math.hypot(p.x - prevX, p.y - (prevY as number));
+          if (jump > H * 1.6) drawing = false;
+        }
+        if (drawing) ctx.lineTo(p.x, p.y);
+        else {
+          ctx.moveTo(p.x, p.y);
+          drawing = true;
+        }
+        prevX = p.x;
+        prevY = p.y;
+      }
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  /** 两条显式曲线的交点：小圆环 + 坐标。 */
+  private drawIntersections(curves: CurveSpec[], opts: PlotOptions): void {
+    const { ctx, width: W } = this.surface;
+    const left = this.screenToWorld(0, 0).x;
+    const right = this.screenToWorld(W, 0).x;
+    const samples = Math.max(240, Math.min(800, Math.floor(W / 2)));
+    const scope: Scope = { x: 0, t: opts.t, a: 0, b: 0 };
+
+    const fnOf = (curve: CurveSpec): ((x: number) => number) => {
+      const compiled = curve.compiled!;
+      const xShift = this.xShift(curve);
+      const yShift = this.yShift(curve);
+      return (x: number): number => {
+        scope.a = curve.a;
+        scope.b = curve.b;
+        scope.x = x - xShift;
+        return compiled.fn(scope) + yShift;
+      };
+    };
+
+    const explicit = curves
+      .map((curve, index) => ({ curve, index }))
+      .filter(({ curve }) => curve.visible && curve.compiled && curve.mode === 'explicit');
+
+    ctx.save();
+    ctx.font = font.monoSmall;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'bottom';
+    let drawn = 0;
+
+    for (let i = 0; i < explicit.length; i++) {
+      for (let j = i + 1; j < explicit.length; j++) {
+        const f1 = fnOf(explicit[i]!.curve);
+        const f2 = fnOf(explicit[j]!.curve);
+        for (const hit of findIntersections(f1, f2, left, right, samples)) {
+          if (drawn >= 8) break;
+          const p = this.worldToScreen(hit.x, hit.y);
+          ctx.strokeStyle = theme.text;
+          ctx.lineWidth = 1.4;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, 5, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.fillStyle = theme.textDim;
+          ctx.fillText(`(${formatSigned(hit.x, 2)}, ${formatSigned(hit.y, 2)})`, p.x + 8, p.y - 4);
+          drawn++;
+        }
+      }
+    }
+    ctx.restore();
+  }
+
   /** F(x,y)=0：屏幕网格上的 marching squares，取符号变化的边交点。 */
   private drawImplicit(curve: CurveSpec, opts: PlotOptions): void {
     const { ctx, width: W, height: H } = this.surface;
@@ -492,7 +686,7 @@ export class PlotView {
     const scope: Scope = { x: 0, y: 0, th: 0, t, a: 0, b: 0 };
 
     curves.forEach((curve, index) => {
-      if (!curve.visible || !curve.compiled || curve.mode === 'implicit') return;
+      if (!curve.visible || !curve.compiled || curve.mode === 'implicit' || curve.mode === 'bivariate') return;
 
       if (curve.mode === 'explicit') {
         scope.a = curve.a;

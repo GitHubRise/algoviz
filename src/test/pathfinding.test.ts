@@ -5,7 +5,7 @@ import {
   type GridSpec,
 } from '../main/modules/pathfinding/algorithms';
 
-const KINDS: AlgoKind[] = ['bfs', 'dfs', 'dijkstra', 'astar'];
+const KINDS: AlgoKind[] = ['bfs', 'dfs', 'dijkstra', 'astar', 'greedy'];
 
 function grid(
   cols: number,
@@ -128,11 +128,51 @@ describe('寻路算法', () => {
     expect(() => solve('bfs', grid(0, 5))).toThrow(/网格尺寸非法/);
   });
 
-  it('T-P16 四种算法在带墙网格上都能终止', () => {
+  it('T-P16 所有算法在带墙网格上都能终止', () => {
     const spec = grid(8, 8, [9, 10, 17, 18, 27, 36, 45]);
     for (const kind of KINDS) {
       const r = solve(kind, spec);
       expect(typeof r.found, kind).toBe('boolean');
     }
+  });
+
+  it('T-P17 开对角线后 4 步到终点', () => {
+    const r = solve('bfs', grid(5, 5), { diagonal: true });
+    expect(r.found).toBe(true);
+    expect(r.path.length).toBe(5);
+  });
+
+  it('T-P18 地形权重计入代价', () => {
+    const spec = {
+      cols: 5,
+      rows: 1,
+      walls: new Set<number>(),
+      start: 0,
+      goal: 4,
+      weights: new Map([[1, 10], [2, 10], [3, 10]]),
+    };
+    const r = solve('dijkstra', spec);
+    expect(r.found).toBe(true);
+    expect(r.cost).toBeCloseTo(31, 6);
+  });
+
+  it('T-P19 贪心最佳优先能找到路', () => {
+    const r = solve('greedy', grid(5, 5));
+    expect(r.found).toBe(true);
+  });
+
+  it('T-P20 对角 + 权重不抛异常', () => {
+    const spec = {
+      cols: 6,
+      rows: 6,
+      walls: new Set<number>([8, 15, 22]),
+      start: 0,
+      goal: 35,
+      weights: new Map([[7, 5], [14, 5]]),
+    };
+    const r = solve('astar', spec, { diagonal: true });
+    expect(r.found).toBe(true);
+    expect(r.cost).toBeGreaterThan(0);
+    expect(Number.isFinite(r.cost)).toBe(true);
   });
 });
