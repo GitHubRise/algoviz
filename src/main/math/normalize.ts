@@ -7,7 +7,7 @@
  * `x=…, y=…` → 参数方程。
  */
 
-export type CurveMode = 'explicit' | 'implicit' | 'polar' | 'parametric' | 'bivariate' | 'complex';
+export type CurveMode = 'explicit' | 'implicit' | 'polar' | 'parametric' | 'bivariate' | 'complex' | 'surface';
 
 export interface NormalizedFormula {
   source: string;

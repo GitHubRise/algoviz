@@ -4,6 +4,7 @@ import { findExtrema, findIntersections, findRoots } from '../../math/analysis';
 import type { ComplexCompiled } from '../../math/complex';
 import type { Compiled, Scope } from '../../math/evaluate';
 import type { CurveMode } from '../../math/normalize';
+import { createCamera, faceNormal, normalizePoints, orbit, projectPoint, shade, type Vec3 } from './surface3d';
 
 export interface CurveSpec {
   color: string;
@@ -57,6 +58,8 @@ export class PlotView {
   cx = 0;
   cy = 0;
   scale = 60;
+  /** 三维视图的相机（只在 surface 模式使用） */
+  readonly camera = { ...createCamera(), yaw: -0.65, pitch: 0.62 };
 
   private lastWidth = 0;
   private lastHeight = 0;
@@ -123,6 +126,15 @@ export class PlotView {
     // 复变函数的域着色铺满整个平面，先画成背景，坐标轴再压在上面
     for (const curve of curves) {
       if (curve.visible && curve.mode === 'complex') this.drawComplex(curve, opts);
+    }
+
+    // 三维曲面独占视图：2D 的网格、坐标轴、曲线都不画
+    const hasSurface = curves.some((c) => c.visible && c.mode === 'surface');
+    if (hasSurface) {
+      for (const curve of curves) {
+        if (curve.visible && curve.mode === 'surface') this.drawSurface(curve, opts);
+      }
+      return;
     }
 
     const step = niceStep(78 / this.scale);
@@ -619,6 +631,180 @@ export class PlotView {
     ctx.restore();
   }
 
+  /** 三维曲面：z=f(x,y)，正交投影 + 画家算法 + 兰伯特着色。 */
+  private drawSurface(curve: CurveSpec, opts: PlotOptions): void {
+    const { ctx, width: W, height: H } = this.surface;
+    const compiled = curve.compiled;
+    if (!compiled) return;
+
+    const N = 40;
+    const left = this.screenToWorld(0, 0).x;
+    const right = this.screenToWorld(W, 0).x;
+    const top = this.screenToWorld(0, 0).y;
+    const bottom = this.screenToWorld(0, H).y;
+
+    const scope: Scope = { x: 0, y: 0, t: opts.t, a: curve.a, b: curve.b };
+    const stride = N + 1;
+    const grid: Vec3[] = new Array(stride * stride);
+    const ax = this.xShift(curve);
+    const by = this.yShift(curve);
+    let finite = 0;
+
+    for (let j = 0; j <= N; j++) {
+      const wy = bottom + ((top - bottom) * j) / N;
+      for (let i = 0; i <= N; i++) {
+        const wx = left + ((right - left) * i) / N;
+        scope.x = wx - ax;
+        scope.y = wy - by;
+        const z = compiled.fn(scope);
+        grid[j * stride + i] = { x: wx, y: wy, z: Number.isFinite(z) ? z : Number.NaN };
+        if (Number.isFinite(z)) finite++;
+      }
+    }
+
+    if (finite < 9) {
+      ctx.save();
+      ctx.font = font.mono;
+      ctx.fillStyle = theme.textDim;
+      ctx.textAlign = 'center';
+      ctx.fillText('该表达式在当前视窗内没有有效的 z 值', W / 2, H / 2);
+      ctx.restore();
+      return;
+    }
+
+    const { points } = normalizePoints(grid);
+    const view = { width: W, height: H, scale: Math.min(W, H) * 0.36 };
+    const proj = points.map((p) => projectPoint(p, this.camera, view));
+
+    const light = normalizeLight({ x: -0.35, y: -0.55, z: 0.75 });
+    const base = parseHex(curve.color);
+
+    interface Face {
+      depth: number;
+      a: number;
+      b: number;
+      c: number;
+      d: number;
+      lit: number;
+    }
+    const faces: Face[] = [];
+    let minDepth = Infinity;
+    let maxDepth = -Infinity;
+
+    for (let j = 0; j < N; j++) {
+      for (let i = 0; i < N; i++) {
+        const i00 = j * stride + i;
+        const i10 = i00 + 1;
+        const i11 = i00 + stride + 1;
+        const i01 = i00 + stride;
+
+        const p00 = points[i00]!;
+        const p10 = points[i10]!;
+        const p11 = points[i11]!;
+        const p01 = points[i01]!;
+        if (
+          !Number.isFinite(p00.z) || !Number.isFinite(p10.z) ||
+          !Number.isFinite(p11.z) || !Number.isFinite(p01.z)
+        ) {
+          continue;
+        }
+
+        const normal = faceNormal(p00, p10, p11);
+        const depth = (proj[i00]!.depth + proj[i10]!.depth + proj[i11]!.depth + proj[i01]!.depth) / 4;
+        minDepth = Math.min(minDepth, depth);
+        maxDepth = Math.max(maxDepth, depth);
+        faces.push({ depth, a: i00, b: i10, c: i11, d: i01, lit: shade(normal, light) });
+      }
+    }
+
+    // 画家算法：远的先画
+    faces.sort((f1, f2) => f2.depth - f1.depth);
+    const depthSpan = Math.max(1e-6, maxDepth - minDepth);
+
+    ctx.save();
+    for (const face of faces) {
+      const fog = 1 - ((face.depth - minDepth) / depthSpan) * 0.42;
+      const r = Math.round(base[0] * face.lit * fog);
+      const g = Math.round(base[1] * face.lit * fog);
+      const b = Math.round(base[2] * face.lit * fog);
+
+      const p1 = proj[face.a]!;
+      const p2 = proj[face.b]!;
+      const p3 = proj[face.c]!;
+      const p4 = proj[face.d]!;
+
+      ctx.beginPath();
+      ctx.moveTo(p1.x, p1.y);
+      ctx.lineTo(p2.x, p2.y);
+      ctx.lineTo(p3.x, p3.y);
+      ctx.lineTo(p4.x, p4.y);
+      ctx.closePath();
+      ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+      ctx.fill();
+      ctx.strokeStyle = `rgb(${r}, ${g}, ${b})`;
+      ctx.lineWidth = 0.6;
+      ctx.stroke();
+    }
+
+    this.drawSurfaceBase();
+    ctx.restore();
+
+    ctx.save();
+    ctx.font = font.monoSmall;
+    ctx.fillStyle = theme.textFaint;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText('ALT+拖动旋转 · 滚轮缩放 · 拖动平移 · 双击复位', 12, H - 10);
+    ctx.restore();
+  }
+
+  /** 三维视图底部的参考网格（z=-1 平面）。 */
+  private drawSurfaceBase(): void {
+    const { ctx, width: W, height: H } = this.surface;
+    const view = { width: W, height: H, scale: Math.min(W, H) * 0.36 };
+    const lines = 8;
+
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let i = 0; i <= lines; i++) {
+      const t = -1 + (2 * i) / lines;
+      const p1 = projectPoint({ x: t, y: -1, z: -1 }, this.camera, view);
+      const p2 = projectPoint({ x: t, y: 1, z: -1 }, this.camera, view);
+      const p3 = projectPoint({ x: -1, y: t, z: -1 }, this.camera, view);
+      const p4 = projectPoint({ x: 1, y: t, z: -1 }, this.camera, view);
+      ctx.moveTo(p1.x, p1.y);
+      ctx.lineTo(p2.x, p2.y);
+      ctx.moveTo(p3.x, p3.y);
+      ctx.lineTo(p4.x, p4.y);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  /** 三维相机操作：旋转 / 缩放 / 平移 / 复位。 */
+  orbitCamera(dx: number, dy: number): void {
+    orbit(this.camera, dx, dy);
+  }
+
+  zoomCamera(factor: number): void {
+    this.camera.zoom = clamp(this.camera.zoom * factor, 0.25, 4);
+  }
+
+  panCamera(dx: number, dy: number): void {
+    this.camera.panX += dx;
+    this.camera.panY += dy;
+  }
+
+  resetCamera(): void {
+    this.camera.yaw = -0.65;
+    this.camera.pitch = 0.62;
+    this.camera.zoom = 1;
+    this.camera.panX = 0;
+    this.camera.panY = 0;
+  }
+
   /** 复变函数：f(z) 的 domain coloring（幅角→色相，模长→明度）。 */
   private offscreen: HTMLCanvasElement | null = null;
 
@@ -1107,6 +1293,18 @@ function clamp(v: number, lo: number, hi: number): number {
 }
 
 const clampLocal = clamp;
+
+function normalizeLight(v: Vec3): Vec3 {
+  const len = Math.hypot(v.x, v.y, v.z) || 1;
+  return { x: v.x / len, y: v.y / len, z: v.z / len };
+}
+
+function parseHex(hex: string): [number, number, number] {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex);
+  if (!m) return [76, 201, 240];
+  const int = parseInt(m[1]!, 16);
+  return [(int >> 16) & 255, (int >> 8) & 255, int & 255];
+}
 
 /** HSV(0..1) → RGB(0..255) */
 function hsvToRgb(h: number, s: number, v: number): [number, number, number] {

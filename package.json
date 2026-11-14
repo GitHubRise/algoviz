@@ -1,7 +1,7 @@
 {
   "name": "algoviz",
   "private": true,
-  "version": "0.5.0",
+  "version": "0.6.0",
   "type": "module",
   "description": "AlgoViz — 函数与算法的可视化实验室",
   "scripts": {

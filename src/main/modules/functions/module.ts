@@ -176,6 +176,15 @@ const PRESET_GROUPS: PresetGroup[] = [
     ],
   },
   {
+    group: '二元函数（三维曲面）',
+    items: [
+      { label: '曲面 z = x² - y²', source: 'x^2 - y^2', mode: 'surface' },
+      { label: '曲面 z = sin x cos y', source: 'sin(x)cos(y)', mode: 'surface' },
+      { label: '曲面 z = x² + y²', source: 'x^2 + y^2', mode: 'surface' },
+      { label: '曲面 z = e^(-x²-y²)', source: 'exp(-x^2 - y^2)', mode: 'surface' },
+    ],
+  },
+  {
     group: '隐函数',
     items: [
       { label: '圆 x² + y² = 9', source: 'x^2 + y^2 - 9', mode: 'implicit' },
@@ -219,6 +228,7 @@ const MODE_LABELS: Record<CurveMode, string> = {
   parametric: 'x(u), y(u)',
   bivariate: 'z = f(x,y)',
   complex: 'f(z) 复变',
+  surface: 'z = f(x,y) 3D',
 };
 
 /** 各模式下允许出现的变量（其余标黄提示「按变量处理」） */
@@ -229,6 +239,7 @@ const MODE_VARS: Record<CurveMode, string[]> = {
   parametric: ['u', 't', 'a', 'b'],
   bivariate: ['x', 'y', 't', 'a', 'b'],
   complex: ['z', 't'],
+  surface: ['x', 'y', 't', 'a', 'b'],
 };
 
 const MAX_CURVES = 5;
@@ -264,6 +275,8 @@ export class FunctionsModule implements VizModule {
 
   private drag: { index: number; a0: number; b0: number; sx: number; sy: number } | null = null;
   private panning: { sx: number; sy: number } | null = null;
+  private orbitState: { sx: number; sy: number } | null = null;
+  private pan3d: { sx: number; sy: number } | null = null;
   private isActive = false;
   private stats!: ReturnType<typeof createStats>;
   private tangentSlider!: ReturnType<typeof slider>;
@@ -325,6 +338,8 @@ export class FunctionsModule implements VizModule {
     this.hover = null;
     this.drag = null;
     this.panning = null;
+    this.orbitState = null;
+    this.pan3d = null;
   }
 
   resize(): void {
@@ -733,7 +748,7 @@ export class FunctionsModule implements VizModule {
       'aria-label': `曲线 ${index + 1} 的类型`,
     });
     modeLabel.htmlFor = `curve-mode-${index}`;
-    for (const mode of ['explicit', 'implicit', 'polar', 'parametric', 'bivariate', 'complex'] as CurveMode[]) {
+    for (const mode of ['explicit', 'implicit', 'polar', 'parametric', 'bivariate', 'surface', 'complex'] as CurveMode[]) {
       select.append(el('option', { value: mode, text: MODE_LABELS[mode] }));
     }
     select.value = curve.mode;
@@ -954,11 +969,18 @@ export class FunctionsModule implements VizModule {
 
   // ---------- 画布交互 ----------
 
+  /** 当前是否有可见的三维曲面：决定拖拽/滚轮走 2D 还是 3D 逻辑 */
+  private is3d(): boolean {
+    return this.curves.some((c) => c.visible && c.mode === 'surface' && c.compiled);
+  }
+
   private bindCanvas(canvas: HTMLCanvasElement): void {
     canvas.addEventListener('wheel', (ev) => {
       ev.preventDefault();
       const rect = canvas.getBoundingClientRect();
-      this.plot.zoomAt(ev.clientX - rect.left, ev.clientY - rect.top, Math.exp(-ev.deltaY * 0.0015));
+      const factor = Math.exp(-ev.deltaY * 0.0015);
+      if (this.is3d()) this.plot.zoomCamera(factor);
+      else this.plot.zoomAt(ev.clientX - rect.left, ev.clientY - rect.top, factor);
       this.ctx.invalidate();
     }, { passive: false });
 
@@ -970,6 +992,15 @@ export class FunctionsModule implements VizModule {
         canvas.setPointerCapture(ev.pointerId);
       } catch {
         // 合成事件没有真实 pointerId，捕获失败不影响后续逻辑
+      }
+
+      if (this.is3d()) {
+        // ALT+拖动旋转，普通拖动平移；这里不做曲线命中检测
+        if (ev.altKey) this.orbitState = { sx, sy };
+        else this.pan3d = { sx, sy };
+        canvas.style.cursor = 'grabbing';
+        this.ctx.invalidate();
+        return;
       }
 
       const index = this.plot.pickCurve(this.specs(), sx, sy, this.ctx.transport.progress);
@@ -992,6 +1023,20 @@ export class FunctionsModule implements VizModule {
       const rect = canvas.getBoundingClientRect();
       const sx = ev.clientX - rect.left;
       const sy = ev.clientY - rect.top;
+
+      if (this.orbitState) {
+        this.plot.orbitCamera(sx - this.orbitState.sx, sy - this.orbitState.sy);
+        this.orbitState = { sx, sy };
+        this.ctx.invalidate();
+        return;
+      }
+
+      if (this.pan3d) {
+        this.plot.panCamera(sx - this.pan3d.sx, sy - this.pan3d.sy);
+        this.pan3d = { sx, sy };
+        this.ctx.invalidate();
+        return;
+      }
 
       if (this.drag) {
         const curve = this.curves[this.drag.index];
@@ -1024,8 +1069,10 @@ export class FunctionsModule implements VizModule {
     const end = (): void => {
       this.drag = null;
       this.panning = null;
+      this.pan3d = null;
+      this.orbitState = null;
       this.active = null;
-      canvas.style.cursor = 'crosshair';
+      canvas.style.cursor = this.is3d() ? 'move' : 'crosshair';
       this.ctx.invalidate();
     };
     canvas.addEventListener('pointerup', end);
@@ -1036,7 +1083,8 @@ export class FunctionsModule implements VizModule {
     });
 
     canvas.addEventListener('dblclick', () => {
-      this.plot.reset();
+      if (this.is3d()) this.plot.resetCamera();
+      else this.plot.reset();
       this.ctx.invalidate();
     });
 
