@@ -6,8 +6,8 @@
 |---|---|
 | 更新时间 | 2026-11-14 20:05（Asia/Shanghai） |
 | 更新来源 | 初始落地会话：从命名讨论到三模块 + 文档全套 |
-| 当前分支 | `feat/initial-version`（合并后回 `master`） |
-| HEAD | 见 `git log --oneline -5`（本条随提交更新） |
+| 当前分支 | `master`（`feat/initial-version` 已 `--no-ff` 合入） |
+| HEAD | `e13a543` 合入合并提交；本条提交在其之后 |
 
 ## 当前任务
 
