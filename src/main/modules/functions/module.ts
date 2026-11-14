@@ -120,12 +120,14 @@ export class FunctionsModule implements VizModule {
     this.curves.forEach((curve, index) => {
       const swatch = el('div', { class: 'swatch on', title: '显示 / 隐藏' });
       swatch.style.background = curve.color;
+      const label = el('label', { class: 'sr-only', text: `函数表达式 ${index + 1}` });
       const input = el('input', {
         type: 'text',
+        id: `curve-expr-${index}`,
         value: curve.source,
         spellcheck: 'false',
-        'aria-label': `函数表达式 ${index + 1}`,
       });
+      label.htmlFor = input.id;
       input.addEventListener('input', () => this.updateCurve(index, input));
       input.addEventListener('keydown', (ev) => {
         if (ev.key === 'Enter') input.blur();
@@ -137,7 +139,7 @@ export class FunctionsModule implements VizModule {
       });
       this.inputs.push(input);
       this.swatches.push(swatch);
-      curveSection.append(el('div', { class: 'curve-row' }, swatch, input));
+      curveSection.append(el('div', { class: 'curve-row' }, swatch, label, input));
     });
     curveSection.append(this.errorEl);
     panel.append(curveSection);

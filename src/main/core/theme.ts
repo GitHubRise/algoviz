@@ -7,7 +7,7 @@ export const theme = {
   borderStrong: '#2b3850',
   text: '#e6edf7',
   textDim: '#8b98ad',
-  textFaint: '#5b6879',
+  textFaint: '#7f8b9d',
   accent: '#4cc9f0',
   accentSoft: 'rgba(76, 201, 240, 0.14)',
 

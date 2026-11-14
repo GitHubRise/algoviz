@@ -25,7 +25,7 @@ export function createApp(root: HTMLElement): void {
     new PathfindingModule({ transport, invalidate }),
   ];
 
-  const tabs = el('nav', { class: 'tabs' });
+  const tabs = el('nav', { class: 'tabs', role: 'tablist', 'aria-label': '可视化模块' });
   const sidebar = el('aside', { class: 'sidebar' });
   const stageHost = el('main', { class: 'stage' });
 
@@ -33,6 +33,9 @@ export function createApp(root: HTMLElement): void {
     const btn = el('button', {
       class: 'tab',
       type: 'button',
+      role: 'tab',
+      id: `tab-${mod.id}`,
+      'aria-controls': `panel-${mod.id}`,
       text: mod.label,
       onclick: () => select(index),
     });
@@ -40,6 +43,9 @@ export function createApp(root: HTMLElement): void {
 
     mod.panel.hidden = index !== 0;
     mod.stage.hidden = index !== 0;
+    mod.panel.id = `panel-${mod.id}`;
+    mod.panel.setAttribute('role', 'tabpanel');
+    mod.panel.setAttribute('aria-labelledby', `tab-${mod.id}`);
     sidebar.append(mod.panel);
     stageHost.append(mod.stage);
     return btn;

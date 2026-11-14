@@ -129,13 +129,19 @@ export function createTransportBar(t: Transport): { el: HTMLElement; sync(): voi
   const range = el('input', {
     class: 'scrub',
     type: 'range',
+    id: 'transport-progress',
     min: '0',
     max: '1000',
     step: '1',
     value: '0',
     'aria-label': '播放进度',
   });
-  const speed = el('select', { title: '播放倍速', 'aria-label': '播放倍速' });
+  const rangeLabel = el('label', { class: 'sr-only', text: '播放进度' });
+  rangeLabel.htmlFor = 'transport-progress';
+
+  const speed = el('select', { title: '播放倍速', id: 'transport-speed', 'aria-label': '播放倍速' });
+  const speedLabel = el('label', { class: 'sr-only', text: '播放倍速' });
+  speedLabel.htmlFor = 'transport-speed';
   for (const v of ['0.25', '0.5', '1', '2', '4']) {
     speed.append(el('option', { value: v, text: `${v}×` }));
   }
@@ -167,7 +173,9 @@ export function createTransportBar(t: Transport): { el: HTMLElement; sync(): voi
     'footer',
     { class: 'transport' },
     el('div', { class: 'group' }, resetBtn, backBtn, playBtn, fwdBtn),
+    rangeLabel,
     range,
+    speedLabel,
     speed,
     readout,
   );
